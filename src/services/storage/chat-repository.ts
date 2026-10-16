@@ -116,13 +116,25 @@ export class ChromeStorageSettingsRepository implements ISettingsRepository {
   private static readonly SETTINGS_KEY = 'tellmemore_user_settings';
 
   async getSettings(): Promise<UserSettings> {
+    let saved: UserSettings | null = null;
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       const result = await chrome.storage.local.get(ChromeStorageSettingsRepository.SETTINGS_KEY);
-      return result[ChromeStorageSettingsRepository.SETTINGS_KEY] ?? DEFAULT_USER_SETTINGS;
+      saved = result[ChromeStorageSettingsRepository.SETTINGS_KEY];
+    } else {
+      const local = localStorage.getItem(ChromeStorageSettingsRepository.SETTINGS_KEY);
+      saved = local ? JSON.parse(local) : null;
     }
-    // Fallback for development/testing
-    const local = localStorage.getItem(ChromeStorageSettingsRepository.SETTINGS_KEY);
-    return local ? JSON.parse(local) : DEFAULT_USER_SETTINGS;
+
+    if (!saved) return DEFAULT_USER_SETTINGS;
+
+    return {
+      ...DEFAULT_USER_SETTINGS,
+      ...saved,
+      activeLLM: { ...DEFAULT_USER_SETTINGS.activeLLM, ...(saved.activeLLM ?? {}) },
+      activeSTT: { ...DEFAULT_USER_SETTINGS.activeSTT, ...(saved.activeSTT ?? {}) },
+      persona: { ...DEFAULT_USER_SETTINGS.persona, ...(saved.persona ?? {}) },
+      ui: { ...DEFAULT_USER_SETTINGS.ui, ...(saved.ui ?? {}) },
+    };
   }
 
   async saveSettings(settings: Partial<UserSettings>): Promise<UserSettings> {
@@ -133,6 +145,7 @@ export class ChromeStorageSettingsRepository implements ISettingsRepository {
       activeLLM: { ...current.activeLLM, ...(settings.activeLLM ?? {}) },
       activeSTT: { ...current.activeSTT, ...(settings.activeSTT ?? {}) },
       persona: { ...current.persona, ...(settings.persona ?? {}) },
+      ui: { ...current.ui, ...(settings.ui ?? {}) },
     };
 
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {

@@ -4,7 +4,16 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { UserSettings, DEFAULT_USER_SETTINGS, LLMProviderType, STTProviderType } from '../../../core/entities/settings';
+import {
+  UserSettings,
+  DEFAULT_USER_SETTINGS,
+  DEFAULT_UI_SETTINGS,
+  LLMProviderType,
+  STTProviderType,
+  FontSizePreset,
+  FontWeightPreset,
+  ColorThemePreset,
+} from '../../../core/entities/settings';
 import { ChromeStorageSettingsRepository } from '../../../services/storage/chat-repository';
 import { DEFAULT_PROMPT_TEMPLATES, PromptTemplateConfig } from '../../../core/prompts/prompt-templates';
 import { FetchModelsMsg, MessageResponse } from '../../../infra/messaging/message-types';
@@ -29,7 +38,7 @@ export const SettingsApp: React.FC = () => {
     availableModels: [],
   });
 
-  const [activeTab, setActiveTab] = useState<'ai' | 'persona' | 'prompts' | 'general'>('ai');
+  const [activeTab, setActiveTab] = useState<'ai' | 'persona' | 'prompts' | 'ui' | 'general'>('ai');
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [modelsList, setModelsList] = useState<string[]>([]);
@@ -46,6 +55,7 @@ export const SettingsApp: React.FC = () => {
         ...ext,
         language: ext.language || 'auto',
         promptTemplates: ext.promptTemplates || DEFAULT_PROMPT_TEMPLATES,
+        ui: ext.ui || DEFAULT_UI_SETTINGS,
       });
 
       if (ext.activeLLM.apiKey) {
@@ -108,7 +118,7 @@ export const SettingsApp: React.FC = () => {
       </div>
 
       {/* Tabs */}
-      <div className="flex bg-zinc-900 p-1 rounded-lg border border-zinc-800 text-[11px]">
+      <div className="flex bg-zinc-900 p-1 rounded-lg border border-zinc-800 text-[11px] gap-0.5">
         <button
           onClick={() => setActiveTab('ai')}
           className={`flex-1 py-1 font-medium rounded transition ${
@@ -132,6 +142,14 @@ export const SettingsApp: React.FC = () => {
           }`}
         >
           {t('promptsTab', currentLang)}
+        </button>
+        <button
+          onClick={() => setActiveTab('ui')}
+          className={`flex-1 py-1 font-medium rounded transition ${
+            activeTab === 'ui' ? 'bg-indigo-600 text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          {t('uiTab', currentLang)}
         </button>
         <button
           onClick={() => setActiveTab('general')}
@@ -392,6 +410,257 @@ export const SettingsApp: React.FC = () => {
           >
             Reset prompts to defaults
           </button>
+        </div>
+      )}
+
+      {/* Tab: UI & Appearance */}
+      {activeTab === 'ui' && (
+        <div className="flex flex-col gap-3">
+          {/* Font Size Preset */}
+          <div>
+            <label className="block text-zinc-300 font-medium mb-1.5">
+              {t('fontSizeLabel', currentLang)}
+            </label>
+            <div className="grid grid-cols-4 gap-1 bg-zinc-900 p-1 rounded border border-zinc-800 text-[11px]">
+              {(['compact', 'normal', 'large', 'huge'] as FontSizePreset[]).map((size) => (
+                <button
+                  key={size}
+                  type="button"
+                  onClick={() =>
+                    setSettings({
+                      ...settings,
+                      ui: { ...(settings.ui || DEFAULT_UI_SETTINGS), fontSize: size },
+                    })
+                  }
+                  className={`py-1 rounded font-medium transition ${
+                    (settings.ui?.fontSize || 'normal') === size
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  {size === 'compact' && '11px'}
+                  {size === 'normal' && '12px'}
+                  {size === 'large' && '13.5px'}
+                  {size === 'huge' && '15px'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Font Weight Preset */}
+          <div>
+            <label className="block text-zinc-300 font-medium mb-1.5">
+              {t('fontWeightLabel', currentLang)}
+            </label>
+            <div className="grid grid-cols-3 gap-1 bg-zinc-900 p-1 rounded border border-zinc-800 text-[11px]">
+              {(['normal', 'medium', 'semibold'] as FontWeightPreset[]).map((weight) => (
+                <button
+                  key={weight}
+                  type="button"
+                  onClick={() =>
+                    setSettings({
+                      ...settings,
+                      ui: { ...(settings.ui || DEFAULT_UI_SETTINGS), fontWeight: weight },
+                    })
+                  }
+                  className={`py-1 rounded font-medium transition ${
+                    (settings.ui?.fontWeight || 'normal') === weight
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                  style={{
+                    fontWeight: weight === 'semibold' ? 600 : weight === 'medium' ? 500 : 400,
+                  }}
+                >
+                  {weight === 'normal' && 'Regular (400)'}
+                  {weight === 'medium' && 'Medium (500)'}
+                  {weight === 'semibold' && 'SemiBold (600)'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Theme Palette Presets */}
+          <div>
+            <label className="block text-zinc-300 font-medium mb-1.5">
+              {t('themePresetLabel', currentLang)}
+            </label>
+            <div className="grid grid-cols-4 gap-1.5">
+              {[
+                { id: 'indigo', name: 'Indigo', hex: '#6366f1' },
+                { id: 'emerald', name: 'Emerald', hex: '#10b981' },
+                { id: 'amber', name: 'Amber', hex: '#f59e0b' },
+                { id: 'rose', name: 'Rose', hex: '#f43f5e' },
+                { id: 'cyan', name: 'Cyan', hex: '#06b6d4' },
+                { id: 'minimal_mono', name: 'Mono', hex: '#71717a' },
+                { id: 'custom', name: 'Custom', hex: settings.ui?.customAccentColor || '#8b5cf6' },
+              ].map((theme) => {
+                const isSelected = (settings.ui?.colorPreset || 'indigo') === theme.id;
+                return (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    onClick={() =>
+                      setSettings({
+                        ...settings,
+                        ui: {
+                          ...(settings.ui || DEFAULT_UI_SETTINGS),
+                          colorPreset: theme.id as ColorThemePreset,
+                          customAccentColor: theme.id !== 'custom' ? theme.hex : (settings.ui?.customAccentColor || '#6366f1'),
+                        },
+                      })
+                    }
+                    className={`flex items-center gap-1.5 px-2 py-1.5 rounded border transition text-[11px] ${
+                      isSelected
+                        ? 'border-indigo-400 bg-zinc-800 text-white shadow-sm'
+                        : 'border-zinc-800 bg-zinc-900/80 text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm"
+                      style={{ backgroundColor: theme.hex }}
+                    />
+                    <span className="truncate">{theme.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Custom Accent & Text Color Pickers */}
+          <div className="bg-zinc-900/60 p-2.5 rounded-lg border border-zinc-800 flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <label className="text-zinc-300 font-medium text-[11px]">
+                {t('customAccentColor', currentLang)}
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={settings.ui?.customAccentColor || '#6366f1'}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      ui: {
+                        ...(settings.ui || DEFAULT_UI_SETTINGS),
+                        colorPreset: 'custom',
+                        customAccentColor: e.target.value,
+                      },
+                    })
+                  }
+                  className="w-7 h-7 rounded border border-zinc-700 bg-transparent cursor-pointer p-0.5"
+                />
+                <input
+                  type="text"
+                  value={settings.ui?.customAccentColor || '#6366f1'}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      ui: {
+                        ...(settings.ui || DEFAULT_UI_SETTINGS),
+                        colorPreset: 'custom',
+                        customAccentColor: e.target.value,
+                      },
+                    })
+                  }
+                  className="w-20 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] font-mono text-zinc-200"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-1.5 border-t border-zinc-800/60">
+              <label className="text-zinc-300 font-medium text-[11px]">
+                {t('customTextColor', currentLang)}
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={settings.ui?.customTextColor || '#f4f4f5'}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      ui: {
+                        ...(settings.ui || DEFAULT_UI_SETTINGS),
+                        customTextColor: e.target.value,
+                      },
+                    })
+                  }
+                  className="w-7 h-7 rounded border border-zinc-700 bg-transparent cursor-pointer p-0.5"
+                />
+                <input
+                  type="text"
+                  value={settings.ui?.customTextColor || '#f4f4f5'}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      ui: {
+                        ...(settings.ui || DEFAULT_UI_SETTINGS),
+                        customTextColor: e.target.value,
+                      },
+                    })
+                  }
+                  className="w-20 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] font-mono text-zinc-200"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Ultra Minimalist Mode Toggle */}
+          <div className="flex items-start gap-2.5 bg-zinc-900/60 p-2.5 rounded-lg border border-zinc-800">
+            <input
+              type="checkbox"
+              id="ultraMinimalToggle"
+              checked={settings.ui?.isUltraMinimal || false}
+              onChange={(e) =>
+                setSettings({
+                  ...settings,
+                  ui: {
+                    ...(settings.ui || DEFAULT_UI_SETTINGS),
+                    isUltraMinimal: e.target.checked,
+                  },
+                })
+              }
+              className="mt-0.5 rounded accent-indigo-600 cursor-pointer"
+            />
+            <label htmlFor="ultraMinimalToggle" className="cursor-pointer">
+              <span className="block text-zinc-200 font-medium text-[11px]">
+                {t('ultraMinimalLabel', currentLang)}
+              </span>
+              <span className="block text-[10px] text-zinc-400 mt-0.5">
+                {t('ultraMinimalDesc', currentLang)}
+              </span>
+            </label>
+          </div>
+
+          {/* Live Preview Box */}
+          <div className="mt-0.5 p-2.5 rounded-lg border border-zinc-800 bg-zinc-950 flex flex-col gap-1.5">
+            <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-500 font-semibold">
+              {t('previewLabel', currentLang)}
+            </span>
+            <div
+              className="p-2 rounded border transition-all"
+              style={{
+                backgroundColor: `${settings.ui?.customAccentColor || '#6366f1'}20`,
+                borderColor: `${settings.ui?.customAccentColor || '#6366f1'}60`,
+                color: settings.ui?.customTextColor || '#f4f4f5',
+                fontSize:
+                  settings.ui?.fontSize === 'compact'
+                    ? '11px'
+                    : settings.ui?.fontSize === 'large'
+                    ? '13.5px'
+                    : settings.ui?.fontSize === 'huge'
+                    ? '15px'
+                    : '12px',
+                fontWeight:
+                  settings.ui?.fontWeight === 'semibold'
+                    ? 600
+                    : settings.ui?.fontWeight === 'medium'
+                    ? 500
+                    : 400,
+              }}
+            >
+              ✨ TellMeMore Copilot: Minimalist AI assistant preview.
+            </div>
+          </div>
         </div>
       )}
 

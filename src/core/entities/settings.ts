@@ -38,6 +38,28 @@ export interface STTConfig {
 
 import { LanguageCode } from '../i18n/translations';
 
+export type FontSizePreset = 'compact' | 'normal' | 'large' | 'huge';
+export type FontWeightPreset = 'normal' | 'medium' | 'semibold';
+export type ColorThemePreset = 'indigo' | 'emerald' | 'amber' | 'rose' | 'cyan' | 'minimal_mono' | 'custom';
+
+export interface UISettings {
+  fontSize: FontSizePreset;
+  fontWeight: FontWeightPreset;
+  colorPreset: ColorThemePreset;
+  customAccentColor: string;
+  customTextColor: string;
+  isUltraMinimal: boolean;
+}
+
+export const DEFAULT_UI_SETTINGS: UISettings = {
+  fontSize: 'normal',
+  fontWeight: 'normal',
+  colorPreset: 'indigo',
+  customAccentColor: '#6366f1',
+  customTextColor: '#f4f4f5',
+  isUltraMinimal: false,
+};
+
 export interface UserSettings {
   activeLLM: LLMConfig;
   activeSTT: STTConfig;
@@ -46,6 +68,8 @@ export interface UserSettings {
   defaultCrawlDepth: number;
   /** Selected language or 'auto' for automatic system detection */
   language: 'auto' | LanguageCode;
+  /** UI appearance, typography, and palette preferences */
+  ui: UISettings;
 }
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
@@ -69,4 +93,5 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   },
   defaultCrawlDepth: 50,
   language: 'auto',
+  ui: DEFAULT_UI_SETTINGS,
 };

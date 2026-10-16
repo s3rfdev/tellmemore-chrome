@@ -15,6 +15,14 @@ import { sendTabMessageWithFallback } from '../../../infra/messaging/tab-messeng
 import { SettingsApp } from '../../popup/components/settings-app';
 import { t, detectSystemLanguage, LanguageCode } from '../../../core/i18n/translations';
 import {
+  UserSettings,
+  UISettings,
+  DEFAULT_UI_SETTINGS,
+  FontSizePreset,
+  FontWeightPreset,
+  ColorThemePreset,
+} from '../../../core/entities/settings';
+import {
   AnalyzeChatMsg,
   TranscribeAudioMsg,
   MessageResponse,
@@ -29,9 +37,42 @@ interface DialogueMessage {
 const settingsRepo = new ChromeStorageSettingsRepository();
 const chatRepo = new IndexedDBChatRepository();
 
+const getFontSizePx = (preset?: FontSizePreset): string => {
+  switch (preset) {
+    case 'compact': return '11px';
+    case 'large': return '13.5px';
+    case 'huge': return '15px';
+    case 'normal':
+    default: return '12px';
+  }
+};
+
+const getFontWeightVal = (preset?: FontWeightPreset): number => {
+  switch (preset) {
+    case 'medium': return 500;
+    case 'semibold': return 600;
+    case 'normal':
+    default: return 400;
+  }
+};
+
+const getAccentColor = (preset?: ColorThemePreset, customColor?: string): string => {
+  switch (preset) {
+    case 'emerald': return '#10b981';
+    case 'amber': return '#f59e0b';
+    case 'rose': return '#f43f5e';
+    case 'cyan': return '#06b6d4';
+    case 'minimal_mono': return '#71717a';
+    case 'custom': return customColor || '#6366f1';
+    case 'indigo':
+    default: return '#6366f1';
+  }
+};
+
 export const CopilotApp: React.FC = () => {
   const [activeView, setActiveView] = useState<'copilot' | 'settings'>('copilot');
   const [currentLang, setCurrentLang] = useState<LanguageCode>(detectSystemLanguage());
+  const [uiSettings, setUiSettings] = useState<UISettings>(DEFAULT_UI_SETTINGS);
 
   const [thread, setThread] = useState<ChatThread | null>(null);
   const [contact, setContact] = useState<ContactProfile>({
@@ -156,7 +197,7 @@ export const CopilotApp: React.FC = () => {
     );
   };
 
-  // Sync active thread and real-time live message listener
+  // Sync active thread, settings changes and real-time live message listener
   useEffect(() => {
     loadActiveThread();
 
@@ -188,9 +229,25 @@ export const CopilotApp: React.FC = () => {
     };
     chrome.tabs.onActivated?.addListener(onTabActivated);
 
+    // Live storage changes listener (for immediate UI theme & typography updates)
+    const storageListener = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: string) => {
+      if (areaName === 'local' && changes['tellmemore_settings']) {
+        const newSettings = changes['tellmemore_settings'].newValue as UserSettings;
+        if (newSettings?.ui) {
+          setUiSettings(newSettings.ui);
+        }
+        if (newSettings?.language) {
+          const lang = newSettings.language === 'auto' ? detectSystemLanguage() : (newSettings.language as LanguageCode);
+          setCurrentLang(lang);
+        }
+      }
+    };
+    chrome.storage.onChanged.addListener(storageListener);
+
     return () => {
       chrome.runtime.onMessage.removeListener(messageListener);
       chrome.tabs.onActivated?.removeListener(onTabActivated);
+      chrome.storage.onChanged.removeListener(storageListener);
       if (currentThreadIdRef.current) {
         saveCurrentSession(currentThreadIdRef.current);
       }
@@ -212,6 +269,9 @@ export const CopilotApp: React.FC = () => {
   const loadActiveThread = async () => {
     try {
       const settings = await settingsRepo.getSettings();
+      if (settings.ui) {
+        setUiSettings(settings.ui);
+      }
       const lang = settings.language === 'auto' ? detectSystemLanguage() : (settings.language as LanguageCode);
       setCurrentLang(lang);
 
@@ -551,10 +611,28 @@ export const CopilotApp: React.FC = () => {
     }
   };
 
+  const accentColor = getAccentColor(uiSettings.colorPreset, uiSettings.customAccentColor);
+  const textColor = uiSettings.customTextColor || '#f4f4f5';
+  const fontSize = getFontSizePx(uiSettings.fontSize);
+  const fontWeight = getFontWeightVal(uiSettings.fontWeight);
+  const isMinimal = uiSettings.isUltraMinimal;
+
   return (
-    <div className="flex flex-col h-full bg-zinc-950 text-zinc-100 text-xs font-sans select-none">
+    <div
+      className="flex flex-col h-full bg-zinc-950 select-none transition-all duration-150"
+      style={{
+        fontSize,
+        fontWeight,
+        color: textColor,
+        ['--tm-accent' as any]: accentColor,
+      }}
+    >
       {/* Sleek Minimalist Top Header: [⚙️ Settings] [📋 Dossier] [Contact Name] [🔄 Sync] */}
-      <div className="h-11 px-3 border-b border-zinc-800/80 bg-zinc-900/90 flex items-center justify-between">
+      <div
+        className={`${
+          isMinimal ? 'h-9 px-2' : 'h-11 px-3'
+        } border-b border-zinc-800/80 bg-zinc-900/90 flex items-center justify-between transition-all`}
+      >
         {/* Left Side: 1. Settings icon, 2. Dossier icon, 3. Contact name, 4. Sync button */}
         <div className="flex items-center gap-2">
           {/* 1. Settings Icon / Back */}
@@ -582,10 +660,13 @@ export const CopilotApp: React.FC = () => {
             <button
               onClick={() => setIsDossierOpen((prev) => !prev)}
               className={`p-1.5 rounded hover:bg-zinc-800 transition ${
-                contactNotes || contactGoals
-                  ? 'text-indigo-400 font-bold bg-indigo-950/60'
-                  : 'text-zinc-400 hover:text-zinc-200'
+                contactNotes || contactGoals ? 'font-bold' : 'text-zinc-400 hover:text-zinc-200'
               }`}
+              style={
+                contactNotes || contactGoals
+                  ? { color: accentColor, backgroundColor: `${accentColor}25` }
+                  : {}
+              }
               title={t('dossierTooltip', currentLang)}
             >
               <span className="text-sm">📋</span>
@@ -603,7 +684,7 @@ export const CopilotApp: React.FC = () => {
                 {thread?.title || t('interlocutor', currentLang)}
               </span>
 
-              {thread?.platform && (
+              {thread?.platform && !isMinimal && (
                 <span
                   className={`text-[9px] px-1 py-0.2 rounded font-mono font-medium uppercase shrink-0 ${
                     thread.platform === 'telegram'
@@ -649,7 +730,8 @@ export const CopilotApp: React.FC = () => {
             <button
               onClick={() => handleDeepAnalysis()}
               disabled={isAnalyzing}
-              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded font-medium flex items-center gap-1 transition text-[11px] shadow-sm shadow-indigo-600/30"
+              style={{ backgroundColor: accentColor }}
+              className="px-2.5 py-1 hover:brightness-110 disabled:opacity-50 text-white rounded font-medium flex items-center gap-1 transition text-[11px] shadow-sm"
             >
               <span>{isAnalyzing ? '⏳' : '⚡'}</span>
               <span>{isAnalyzing ? t('analyzing', currentLang) : t('analyze', currentLang)}</span>
@@ -672,7 +754,10 @@ export const CopilotApp: React.FC = () => {
           <div className="px-3 py-1 bg-zinc-900/40 border-b border-zinc-800/40 flex items-center justify-between text-[10px] text-zinc-400">
             <div className="flex items-center gap-1.5 truncate">
               {thinkingPhase ? (
-                <span className="text-indigo-400 font-medium flex items-center gap-1 animate-pulse">
+                <span
+                  className="font-medium flex items-center gap-1 animate-pulse"
+                  style={{ color: accentColor }}
+                >
                   <span>●</span>
                   <span>{thinkingPhase}</span>
                 </span>
@@ -682,7 +767,22 @@ export const CopilotApp: React.FC = () => {
             </div>
 
             {newMessagesCounter > 0 && (
-              <span className="px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 text-[9px] animate-pulse">
+              <span
+                className={`px-1.5 py-0.2 rounded text-[9px] ${
+                  isMinimal
+                    ? 'text-zinc-400 font-mono'
+                    : 'animate-pulse font-medium'
+                }`}
+                style={
+                  !isMinimal
+                    ? {
+                        backgroundColor: `${accentColor}25`,
+                        color: accentColor,
+                        border: `1px solid ${accentColor}50`,
+                      }
+                    : {}
+                }
+              >
                 +{newMessagesCounter} {t('newBadge', currentLang)}
               </span>
             )}
@@ -703,9 +803,12 @@ export const CopilotApp: React.FC = () => {
 
           {/* Dossier Drawer */}
           {isDossierOpen && (
-            <div className="p-3 bg-zinc-900 border-b border-indigo-950 flex flex-col gap-2 shadow-lg">
+            <div className="p-3 bg-zinc-900 border-b border-zinc-800 flex flex-col gap-2 shadow-lg">
               <div className="flex items-center justify-between">
-                <span className="font-semibold text-indigo-300 text-xs">
+                <span
+                  className="font-semibold text-xs"
+                  style={{ color: accentColor }}
+                >
                   📋 {t('dossierTitle', currentLang)}: {thread?.title || t('interlocutor', currentLang)}
                 </span>
                 <button
@@ -745,7 +848,8 @@ export const CopilotApp: React.FC = () => {
               <div className="flex justify-end gap-2 pt-1">
                 <button
                   onClick={handleSaveContactDossier}
-                  className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[11px] font-medium"
+                  style={{ backgroundColor: accentColor }}
+                  className="px-3 py-1 hover:brightness-110 text-white rounded text-[11px] font-medium transition"
                 >
                   {t('save', currentLang)}
                 </button>
@@ -836,9 +940,18 @@ export const CopilotApp: React.FC = () => {
                   key={idx}
                   className={`p-2.5 rounded-lg max-w-[92%] leading-relaxed ${
                     item.role === 'user'
-                      ? 'self-end bg-indigo-600/30 border border-indigo-500/40 text-indigo-100'
+                      ? 'self-end border'
                       : 'self-start bg-zinc-900 border border-zinc-800 text-zinc-200'
                   }`}
+                  style={
+                    item.role === 'user'
+                      ? {
+                          backgroundColor: `${accentColor}25`,
+                          borderColor: `${accentColor}55`,
+                          color: '#ffffff',
+                        }
+                      : {}
+                  }
                 >
                   <div className="text-[10px] font-semibold text-zinc-400 mb-1">
                     {item.role === 'user' ? t('you', currentLang) : 'TellMeMore Copilot'}
@@ -849,8 +962,14 @@ export const CopilotApp: React.FC = () => {
 
               {/* Live Thinking Status in Chat */}
               {thinkingPhase && (
-                <div className="self-start p-2.5 bg-zinc-900/60 border border-zinc-800/60 rounded-lg text-indigo-300 text-xs flex items-center gap-2 animate-pulse">
-                  <div className="w-2 h-2 rounded-full bg-indigo-500" />
+                <div
+                  className="self-start p-2.5 bg-zinc-900/60 border border-zinc-800/60 rounded-lg text-xs flex items-center gap-2 animate-pulse"
+                  style={{ color: accentColor }}
+                >
+                  <div
+                    className="w-2 h-2 rounded-full"
+                    style={{ backgroundColor: accentColor }}
+                  />
                   <span>{thinkingPhase}</span>
                 </div>
               )}
@@ -892,7 +1011,8 @@ export const CopilotApp: React.FC = () => {
             <button
               onClick={() => handleSendQuestion()}
               disabled={!promptText.trim() || isSendingPrompt}
-              className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-medium rounded-lg transition"
+              style={{ backgroundColor: accentColor }}
+              className="px-3 py-2 hover:brightness-110 disabled:opacity-40 text-white font-medium rounded-lg transition"
             >
               {isSendingPrompt ? '...' : '→'}
             </button>
