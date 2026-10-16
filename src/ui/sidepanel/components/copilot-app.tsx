@@ -1,14 +1,15 @@
 /**
  * @file src/ui/sidepanel/components/copilot-app.tsx
- * @description Full-featured Copilot SidePanel interface with live context, manipulation analysis, and chat.
+ * @description Copilot SidePanel with Per-Contact Dossier & Goals, RAG & Sandwich memory, and persistent dialogue.
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ChatThread } from '../../../core/entities/thread';
+import { ChatThread, ContactProfile } from '../../../core/entities/thread';
 import { ChatMessage } from '../../../core/entities/message';
 import { ChatAnalysis } from '../../../core/interfaces/llm-provider';
-import { ChromeStorageSettingsRepository } from '../../../services/storage/chat-repository';
+import { ChromeStorageSettingsRepository, IndexedDBChatRepository } from '../../../services/storage/chat-repository';
 import { AudioRecorderService } from '../../../services/audio/audio-recorder';
+import { RAGEngine } from '../../../services/rag/rag-engine';
 import {
   AnalyzeChatMsg,
   TranscribeAudioMsg,
@@ -21,13 +22,26 @@ interface DialogueMessage {
 }
 
 const settingsRepo = new ChromeStorageSettingsRepository();
+const chatRepo = new IndexedDBChatRepository();
 
 export const CopilotApp: React.FC = () => {
   const [thread, setThread] = useState<ChatThread | null>(null);
+  const [contact, setContact] = useState<ContactProfile>({
+    id: '',
+    name: 'Собеседник',
+    notes: '',
+  });
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [analysis, setAnalysis] = useState<ChatAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string>('Готов к анализу');
+  const [crawlDepth, setCrawlDepth] = useState<number>(50);
+
+  // Per-contact dossier modal toggle
+  const [isDossierOpen, setIsDossierOpen] = useState(false);
+  const [contactGoals, setContactGoals] = useState('');
+  const [contactNotes, setContactNotes] = useState('');
 
   // Copilot dialogue
   const [dialogue, setDialogue] = useState<DialogueMessage[]>([]);
@@ -45,7 +59,7 @@ export const CopilotApp: React.FC = () => {
     dialogueEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [dialogue]);
 
-  // Sync with active tab on mount
+  // Sync active thread on mount
   useEffect(() => {
     loadActiveThread();
   }, []);
@@ -62,25 +76,52 @@ export const CopilotApp: React.FC = () => {
 
       const response = await chrome.tabs.sendMessage(tabId, { type: 'GET_CURRENT_THREAD' });
       if (response?.success && response.data) {
-        setThread(response.data);
+        const currentThread: ChatThread = response.data;
+        setThread(currentThread);
+
+        // Load contact dossier from IndexedDB
+        const savedContact = await chatRepo.getThread(currentThread.id);
+        if (savedContact?.contact) {
+          setContact(savedContact.contact);
+          setContactNotes(savedContact.contact.notes || '');
+        } else {
+          setContact(currentThread.contact);
+        }
+
+        // Restore past messages from DB
+        const cached = await chatRepo.getMessages(currentThread.id, 100);
+        if (cached.length > 0) {
+          setMessages(cached);
+          setStatusMessage(`Загружено ${cached.length} сообщений из базы`);
+        }
       }
     } catch {
-      // Content script may not be loaded yet or tab is not supported
+      // Content script not ready or not on messenger tab
     }
   };
 
-  // 1. Fetch & analyze messages from active chat
-  const handleDeepAnalysis = async (depth = 50) => {
+  const handleSaveContactDossier = async () => {
+    if (!thread) return;
+    const updatedContact: ContactProfile = {
+      ...contact,
+      notes: contactNotes,
+    };
+    setContact(updatedContact);
+    await chatRepo.saveContactProfile(updatedContact);
+    setIsDossierOpen(false);
+    setStatusMessage('Досье на контакт сохранено ✓');
+  };
+
+  // 1. Fetch & analyze messages from active chat with RAG & Sandwich Principle
+  const handleDeepAnalysis = async (targetDepth?: number) => {
+    const depth = targetDepth || crawlDepth;
     try {
       setIsAnalyzing(true);
-      setStatusMessage(`Сбор последних ${depth} сообщений из чата...`);
+      setStatusMessage(`RAG: Сбор последних ${depth} сообщений из чата...`);
 
       const tabId = await getActiveTabId();
-      if (!tabId) {
-        throw new Error('Активная вкладка не найдена');
-      }
+      if (!tabId) throw new Error('Активная вкладка не найдена');
 
-      // Request content script to crawl messages
       const crawlResp = await chrome.tabs.sendMessage(tabId, {
         type: 'REQUEST_CRAWL_MESSAGES',
         payload: { depth },
@@ -93,14 +134,28 @@ export const CopilotApp: React.FC = () => {
       const fetchedMessages: ChatMessage[] = crawlResp.data;
       setMessages(fetchedMessages);
 
-      setStatusMessage(`Анализ ${fetchedMessages.length} сообщений через LLM...`);
+      setStatusMessage(`RAG-индексация и анализ ${fetchedMessages.length} сообщений...`);
 
       const settings = await settingsRepo.getSettings();
+
+      // Build Sandwich Prompt with RAG
+      const sandwichPrompt = RAGEngine.buildSandwichPrompt({
+        persona: settings.persona,
+        contact: {
+          ...contact,
+          notes: contactNotes,
+        },
+        allMessages: fetchedMessages,
+        activeMessagesCount: 20,
+        customQuery: contactGoals ? `Моя главная цель по этому контакту: "${contactGoals}"` : undefined,
+      });
+
       const analysisResp: MessageResponse<ChatAnalysis> = await chrome.runtime.sendMessage<AnalyzeChatMsg>({
         type: 'ANALYZE_CHAT',
         payload: {
           messages: fetchedMessages,
           persona: settings.persona,
+          customQuery: sandwichPrompt,
         },
       });
 
@@ -109,7 +164,7 @@ export const CopilotApp: React.FC = () => {
       }
 
       setAnalysis(analysisResp.data);
-      setStatusMessage(`Готово: проанализировано ${fetchedMessages.length} сообщений`);
+      setStatusMessage(`Готово: RAG-анализ ${fetchedMessages.length} сообщений завершён`);
     } catch (err) {
       console.error('[CopilotApp] Analysis failed:', err);
       setStatusMessage(`Ошибка: ${(err as Error).message}`);
@@ -118,7 +173,7 @@ export const CopilotApp: React.FC = () => {
     }
   };
 
-  // 2. Insert reply directly into Facebook chat
+  // 2. Insert reply directly into chat
   const handleInsertReply = async (text: string) => {
     try {
       const tabId = await getActiveTabId();
@@ -135,7 +190,7 @@ export const CopilotApp: React.FC = () => {
     }
   };
 
-  // 3. Send custom question to Copilot
+  // 3. Send custom question to Copilot with RAG context
   const handleSendQuestion = async (customQuestion?: string) => {
     const query = customQuestion || promptText;
     if (!query.trim() || isSendingPrompt) return;
@@ -147,9 +202,8 @@ export const CopilotApp: React.FC = () => {
 
     try {
       const settings = await settingsRepo.getSettings();
-
-      // If we don't have messages yet, attempt a fast crawl
       let contextMessages = messages;
+
       if (contextMessages.length === 0) {
         const tabId = await getActiveTabId();
         if (tabId) {
@@ -164,22 +218,32 @@ export const CopilotApp: React.FC = () => {
         }
       }
 
+      // Sandwich prompt for dialogue
+      const sandwichQuery = RAGEngine.buildSandwichPrompt({
+        persona: settings.persona,
+        contact: { ...contact, notes: contactNotes },
+        allMessages: contextMessages,
+        activeMessagesCount: 15,
+        customQuery: query,
+      });
+
       const response: MessageResponse<ChatAnalysis> = await chrome.runtime.sendMessage<AnalyzeChatMsg>({
         type: 'ANALYZE_CHAT',
         payload: {
           messages: contextMessages,
           persona: settings.persona,
-          customQuery: query,
+          customQuery: sandwichQuery,
         },
       });
 
       if (response.success && response.data) {
         const answer =
           response.data.situationSummary +
-          '\n\n' +
-          response.data.manipulationVerdict.explanation +
+          (response.data.manipulationVerdict.explanation
+            ? `\n\n🔍 Разбор: ${response.data.manipulationVerdict.explanation}`
+            : '') +
           (response.data.suggestedReplies?.[0]
-            ? `\n\n💡 Рекомендация:\n${response.data.suggestedReplies[0].text}`
+            ? `\n\n💡 Рекомендуемый ход:\n"${response.data.suggestedReplies[0].text}"`
             : '');
 
         setDialogue([...newDialogue, { role: 'assistant', content: answer }]);
@@ -189,14 +253,14 @@ export const CopilotApp: React.FC = () => {
     } catch (err) {
       setDialogue([
         ...newDialogue,
-        { role: 'assistant', content: `Ошибка ответа: ${(err as Error).message}` },
+        { role: 'assistant', content: `Ошибка: ${(err as Error).message}` },
       ]);
     } finally {
       setIsSendingPrompt(false);
     }
   };
 
-  // 4. Voice question
+  // 4. Voice input
   const handleVoiceToggle = async () => {
     if (isRecording) {
       setIsRecording(false);
@@ -234,39 +298,105 @@ export const CopilotApp: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-zinc-950 text-zinc-100 text-xs">
+    <div className="flex flex-col h-full bg-zinc-950 text-zinc-100 text-xs font-sans">
       {/* Top Header */}
-      <div className="p-3 border-b border-zinc-800 bg-zinc-900/50 flex items-center justify-between">
+      <div className="p-2.5 border-b border-zinc-800 bg-zinc-900/60 flex items-center justify-between">
         <div>
           <div className="flex items-center gap-1.5">
             <span className="font-semibold text-sm text-zinc-100">
               {thread?.title || 'Активный чат'}
             </span>
-            <span className="px-1.5 py-0.5 rounded text-[10px] bg-indigo-900/60 text-indigo-300 font-mono">
-              FB
-            </span>
+            <button
+              onClick={() => setIsDossierOpen((prev) => !prev)}
+              className="px-1.5 py-0.5 rounded text-[10px] bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-800 transition"
+              title="Открыть досье и цели по этому контакту"
+            >
+              👤 Досье & Цели
+            </button>
           </div>
           <div className="text-[11px] text-zinc-400 mt-0.5">
-            {messages.length > 0 ? `В контексте: ${messages.length} сообщений` : statusMessage}
+            {messages.length > 0 ? `В RAG-памяти: ${messages.length} сообщений` : statusMessage}
           </div>
         </div>
 
-        <button
-          onClick={() => handleDeepAnalysis(50)}
-          disabled={isAnalyzing}
-          className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded font-medium flex items-center gap-1 transition"
-        >
-          <span>{isAnalyzing ? '⏳' : '⚡'}</span>
-          <span>{isAnalyzing ? 'Анализ...' : 'Анализ 50 сообщений'}</span>
-        </button>
+        <div className="flex items-center gap-1.5">
+          <select
+            value={crawlDepth}
+            onChange={(e) => setCrawlDepth(Number(e.target.value))}
+            className="bg-zinc-800 border border-zinc-700 text-zinc-200 rounded px-1.5 py-1 text-[11px] focus:outline-none"
+          >
+            <option value={30}>30 сообщ.</option>
+            <option value={50}>50 сообщ.</option>
+            <option value={100}>100 сообщ.</option>
+            <option value={300}>300 сообщ. (RAG)</option>
+          </select>
+
+          <button
+            onClick={() => handleDeepAnalysis()}
+            disabled={isAnalyzing}
+            className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded font-medium flex items-center gap-1 transition text-[11px]"
+          >
+            <span>{isAnalyzing ? '⏳' : '⚡'}</span>
+            <span>{isAnalyzing ? 'RAG...' : 'Анализ'}</span>
+          </button>
+        </div>
       </div>
 
-      {/* Main Content Area */}
+      {/* Dossier Modal / Drawer */}
+      {isDossierOpen && (
+        <div className="p-3 bg-zinc-900 border-b border-indigo-900/50 flex flex-col gap-2">
+          <div className="font-semibold text-indigo-300 text-xs">
+            Досье и цели по контакту: {thread?.title || 'Собеседник'}
+          </div>
+
+          <div>
+            <label className="block text-[10px] text-zinc-400 mb-0.5">
+              Мои конкретные цели по этому человеку:
+            </label>
+            <input
+              type="text"
+              value={contactGoals}
+              onChange={(e) => setContactGoals(e.target.value)}
+              placeholder="Например: Не уступать в цене, закрыть договор к пятнице"
+              className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-indigo-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[10px] text-zinc-400 mb-0.5">
+              Заметки о собеседнике (психотип, триггеры, прошлые манипуляции):
+            </label>
+            <textarea
+              rows={2}
+              value={contactNotes}
+              onChange={(e) => setContactNotes(e.target.value)}
+              placeholder="Любит затягивать сроки, давит на жалость..."
+              className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-indigo-500 resize-none"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              onClick={() => setIsDossierOpen(false)}
+              className="px-2 py-1 text-zinc-400 hover:text-zinc-200 text-[11px]"
+            >
+              Отмена
+            </button>
+            <button
+              onClick={handleSaveContactDossier}
+              className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[11px] font-medium"
+            >
+              Сохранить досье
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Main Area */}
       <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-3">
-        {/* Analysis Dashboard Card (if available) */}
+        {/* Analysis Dashboard Card */}
         {analysis && (
           <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-lg flex flex-col gap-2.5 shadow-sm">
-            {/* Manipulation Risk Pill */}
             <div className="flex items-center justify-between">
               <span className="font-semibold text-zinc-300">Анализ манипуляций</span>
               <span
@@ -282,12 +412,10 @@ export const CopilotApp: React.FC = () => {
               </span>
             </div>
 
-            {/* Explanation */}
             <p className="text-zinc-300 leading-relaxed text-[11px]">
               {analysis.manipulationVerdict.explanation}
             </p>
 
-            {/* Tactics Tags */}
             {analysis.manipulationVerdict.tacticsDetected.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {analysis.manipulationVerdict.tacticsDetected.map((tactic, idx) => (
@@ -301,7 +429,6 @@ export const CopilotApp: React.FC = () => {
               </div>
             )}
 
-            {/* Suggested Replies */}
             {analysis.suggestedReplies.length > 0 && (
               <div className="mt-1 flex flex-col gap-2">
                 <div className="font-semibold text-zinc-400 text-[11px]">Рекомендуемые ответы:</div>
@@ -330,14 +457,13 @@ export const CopilotApp: React.FC = () => {
           </div>
         )}
 
-        {/* Free-form Dialogue Feed */}
+        {/* Dialogue Feed */}
         <div className="flex flex-col gap-2.5 mt-2">
           {dialogue.length === 0 && !analysis && (
             <div className="text-center text-zinc-500 py-8 px-4 flex flex-col items-center gap-2">
               <span className="text-3xl">🧠</span>
               <p className="text-xs">
-                Нажмите <strong>«Анализ 50 сообщений»</strong> вверху или задайте любой вопрос по
-                текущей переписке ниже.
+                Запустите <strong>«RAG-анализ»</strong> сообщений или задайте вопрос Копилоту ниже.
               </p>
             </div>
           )}
@@ -361,7 +487,7 @@ export const CopilotApp: React.FC = () => {
         </div>
       </div>
 
-      {/* Bottom Input Area */}
+      {/* Bottom Input */}
       <div className="p-2.5 border-t border-zinc-800 bg-zinc-900/60 flex items-center gap-2">
         <button
           onClick={handleVoiceToggle}
@@ -386,7 +512,7 @@ export const CopilotApp: React.FC = () => {
               handleSendQuestion();
             }
           }}
-          placeholder="Спросить Копилота о переписке..."
+          placeholder="Спросить Копилота (с учётом целей и RAG)..."
           disabled={isSendingPrompt}
           className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
         />

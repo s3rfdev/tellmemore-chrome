@@ -7,6 +7,7 @@ import { ExtensionMessage, MessageResponse } from '../infra/messaging/message-ty
 import { ChromeStorageSettingsRepository } from '../services/storage/chat-repository';
 import { LLMFactory } from '../services/llm/llm-factory';
 import { STTFactory } from '../services/stt/stt-factory';
+import { ModelDiscoveryService } from '../services/llm/model-discovery';
 
 const settingsRepo = new ChromeStorageSettingsRepository();
 
@@ -52,6 +53,19 @@ export async function handleBackgroundMessage(
 
         const transcription = await stt.transcribeAudio(audioBlob, message.payload.language);
         return { success: true, data: transcription };
+      }
+
+      case 'FETCH_AVAILABLE_MODELS': {
+        const { provider, apiKey, endpointUrl } = message.payload;
+        let models: string[] = [];
+        if (provider === 'gemini') {
+          models = await ModelDiscoveryService.fetchGeminiModels(apiKey);
+        } else if (provider === 'zai') {
+          models = await ModelDiscoveryService.fetchZAIModels(apiKey);
+        } else {
+          models = await ModelDiscoveryService.fetchOpenAIModels(apiKey, endpointUrl);
+        }
+        return { success: true, data: models };
       }
 
       case 'OPEN_SIDEPANEL': {

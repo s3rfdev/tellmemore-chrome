@@ -3,9 +3,9 @@
  * @description Settings entities, LLM/STT configurations, and user persona/goals.
  */
 
-export type LLMProviderType = 'gemini' | 'openai' | 'groq' | 'xai' | 'custom_openai';
+export type LLMProviderType = 'gemini' | 'openai' | 'groq' | 'xai' | 'zai' | 'custom_openai';
 
-export type STTProviderType = 'groq_whisper' | 'openai_whisper' | 'custom_stt';
+export type STTProviderType = 'deepgram' | 'groq_whisper' | 'openai_whisper' | 'custom_stt';
 
 export interface PersonaGoals {
   /** Name or alias of the user */
@@ -48,13 +48,13 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   activeLLM: {
     provider: 'gemini',
     apiKey: '',
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3.7-flash',
     temperature: 0.7,
   },
   activeSTT: {
-    provider: 'groq_whisper',
+    provider: 'deepgram',
     apiKey: '',
-    model: 'whisper-large-v3-turbo',
+    model: 'nova-2',
   },
   persona: {
     userName: 'User',

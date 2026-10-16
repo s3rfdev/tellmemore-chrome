@@ -15,7 +15,10 @@ export type ExtensionMessageType =
   | 'REQUEST_CRAWL_MESSAGES'
   | 'CRAWL_PROGRESS_NOTIFICATION'
   | 'INSERT_DRAFT_TO_CHAT'
-  | 'OPEN_SIDEPANEL';
+  | 'OPEN_SIDEPANEL'
+  | 'FETCH_AVAILABLE_MODELS'
+  | 'GET_CONTACT_PROFILE'
+  | 'SAVE_CONTACT_PROFILE';
 
 export interface BaseMessage<T extends ExtensionMessageType, P> {
   type: T;
@@ -60,6 +63,27 @@ export type InsertDraftMsg = BaseMessage<'INSERT_DRAFT_TO_CHAT', InsertDraftPayl
 
 export type OpenSidePanelMsg = BaseMessage<'OPEN_SIDEPANEL', void>;
 
+export interface FetchModelsPayload {
+  provider: string;
+  apiKey: string;
+  endpointUrl?: string;
+}
+export type FetchModelsMsg = BaseMessage<'FETCH_AVAILABLE_MODELS', FetchModelsPayload>;
+
+export interface GetContactProfilePayload {
+  contactId: string;
+}
+export type GetContactProfileMsg = BaseMessage<'GET_CONTACT_PROFILE', GetContactProfilePayload>;
+
+export interface SaveContactProfilePayload {
+  contactId: string;
+  name: string;
+  notes?: string;
+  goals?: string;
+  customCrawlDepth?: number;
+}
+export type SaveContactProfileMsg = BaseMessage<'SAVE_CONTACT_PROFILE', SaveContactProfilePayload>;
+
 export type ExtensionMessage =
   | GetSettingsMsg
   | SaveSettingsMsg
@@ -69,7 +93,10 @@ export type ExtensionMessage =
   | RequestCrawlMessagesMsg
   | CrawlProgressMsg
   | InsertDraftMsg
-  | OpenSidePanelMsg;
+  | OpenSidePanelMsg
+  | FetchModelsMsg
+  | GetContactProfileMsg
+  | SaveContactProfileMsg;
 
 export interface MessageResponse<T = unknown> {
   success: boolean;

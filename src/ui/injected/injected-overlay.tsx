@@ -9,6 +9,7 @@ import { QuickMenu } from './quick-menu';
 import { StatusBanner } from './status-banner';
 import { AudioRecorderService } from '../../services/audio/audio-recorder';
 import { IMessengerAdapter } from '../../core/interfaces/messenger-adapter';
+import { RAGEngine } from '../../services/rag/rag-engine';
 import {
   AnalyzeChatMsg,
   TranscribeAudioMsg,
@@ -62,13 +63,22 @@ export const InjectedOverlay: React.FC<InjectedOverlayProps> = ({ adapter }) => 
         showBanner(current, target, text);
       });
 
-      showBanner(messages.length, messages.length, 'Анализ диалога и генерация ответа...');
+      showBanner(messages.length, messages.length, 'RAG-индексация и выработка стратегии...');
+
+      const thread = adapter.getThreadInfo();
+      const sandwichPrompt = RAGEngine.buildSandwichPrompt({
+        persona: settings.persona,
+        contact: thread?.contact,
+        allMessages: messages,
+        activeMessagesCount: 20,
+      });
 
       const response: MessageResponse<ChatAnalysis> = await chrome.runtime.sendMessage<AnalyzeChatMsg>({
         type: 'ANALYZE_CHAT',
         payload: {
           messages,
           persona: settings.persona,
+          customQuery: sandwichPrompt,
         },
       });
 
