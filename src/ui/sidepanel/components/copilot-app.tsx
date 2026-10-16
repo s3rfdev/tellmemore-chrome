@@ -1,7 +1,7 @@
 /**
  * @file src/ui/sidepanel/components/copilot-app.tsx
  * @description Senior Minimalist Copilot SidePanel with Live Ingestion, Thinking Pipeline,
- * Per-Interlocutor Session Persistence, Automatic Thread Detection, and Full 6-Language Localization.
+ * Per-Interlocutor Session Persistence, Automatic Thread Detection, Diagnostic Stage Markers, and Full 6-Language Localization.
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -99,8 +99,9 @@ export const CopilotApp: React.FC = () => {
         analysis: analysisRef.current,
         goals: contactGoalsRef.current,
       });
+      console.log(`[TellMeMore:UI] 💾 Saved Copilot session for thread "${id}"`);
     } catch (err) {
-      console.warn('[CopilotApp] Failed to save session:', err);
+      console.warn('[TellMeMore:UI] Failed to save session:', err);
     }
   };
 
@@ -113,6 +114,7 @@ export const CopilotApp: React.FC = () => {
 
     currentThreadIdRef.current = newThread.id;
     setThread(newThread);
+    console.log(`[TellMeMore:UI] 🔄 Switched active thread to: "${newThread.title}" (${newThread.id})`);
 
     // 1. Restore contact notes
     const savedContact = await chatRepo.getThread(newThread.id);
@@ -167,6 +169,9 @@ export const CopilotApp: React.FC = () => {
           setNewMessagesCounter((c) => c + 1);
           return [...prev, incoming];
         });
+        if (currentThreadIdRef.current) {
+          chatRepo.upsertMessages(currentThreadIdRef.current, [incoming]).catch(() => {});
+        }
         setStatusMessage(t('newMessagesSynced', currentLang));
       } else if (msg.type === 'ACTIVE_THREAD_CHANGED') {
         const newThread = msg.payload;
@@ -193,8 +198,15 @@ export const CopilotApp: React.FC = () => {
   }, [currentLang]);
 
   const getActiveTabId = async (): Promise<number | null> => {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    return tabs[0]?.id ?? null;
+    try {
+      let tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tabs[0]?.id) {
+        tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      }
+      return tabs[0]?.id ?? null;
+    } catch {
+      return null;
+    }
   };
 
   const loadActiveThread = async () => {
@@ -211,7 +223,8 @@ export const CopilotApp: React.FC = () => {
 
       const response = await sendTabMessageWithFallback<{ type: string }, MessageResponse<ChatThread>>(
         tabId,
-        { type: 'GET_CURRENT_THREAD' }
+        { type: 'GET_CURRENT_THREAD' },
+        4000
       );
 
       if (response?.success && response.data) {
@@ -238,7 +251,8 @@ export const CopilotApp: React.FC = () => {
 
       const response = await sendTabMessageWithFallback<{ type: string }, MessageResponse<ChatThread>>(
         tabId,
-        { type: 'GET_CURRENT_THREAD' }
+        { type: 'GET_CURRENT_THREAD' },
+        5000
       );
 
       if (response?.success && response.data) {
@@ -270,30 +284,49 @@ export const CopilotApp: React.FC = () => {
   // 1. Fetch & analyze messages from active chat with RAG & Sandwich Principle
   const handleDeepAnalysis = async (targetDepth?: number) => {
     const depth = targetDepth || crawlDepth;
+    const startTime = Date.now();
     try {
       setIsAnalyzing(true);
-      setThinkingPhase(t('readingHistory', currentLang));
+      console.log(`[TellMeMore:UI] 🚀 [1/4] Starting deep analysis for depth=${depth}...`);
+      setThinkingPhase(`[1/4] 🔍 ${t('readingHistory', currentLang)} (${depth})`);
 
       const tabId = await getActiveTabId();
       if (!tabId) throw new Error(t('tabNotFound', currentLang));
 
+      // Stage 1: Request messages with strict 9s timeout
       const crawlResp = await sendTabMessageWithFallback<
         { type: string; payload: { depth: number } },
         MessageResponse<ChatMessage[]>
-      >(tabId, {
-        type: 'REQUEST_CRAWL_MESSAGES',
-        payload: { depth },
-      });
+      >(
+        tabId,
+        {
+          type: 'REQUEST_CRAWL_MESSAGES',
+          payload: { depth },
+        },
+        9000
+      );
 
       if (!crawlResp?.success || !crawlResp.data) {
         throw new Error(crawlResp?.error || t('failedReadMessages', currentLang));
       }
 
       const fetchedMessages: ChatMessage[] = crawlResp.data;
+      console.log(`[TellMeMore:UI] ✅ [1/4] Successfully fetched ${fetchedMessages.length} messages.`);
       setMessages(fetchedMessages);
       setNewMessagesCounter(0);
 
-      setThinkingPhase(t('analyzingTactics', currentLang));
+      // Save messages in Extension's privileged IndexedDB
+      if (thread?.id) {
+        try {
+          await chatRepo.upsertMessages(thread.id, fetchedMessages);
+        } catch (dbErr) {
+          console.warn('[TellMeMore:UI] IDB cache warning:', dbErr);
+        }
+      }
+
+      // Stage 2: RAG Sandwich Prompt Construction
+      console.log(`[TellMeMore:UI] 🧠 [2/4] Constructing RAG Sandwich prompt...`);
+      setThinkingPhase(`[2/4] 🧠 ${t('analyzingTactics', currentLang)}`);
 
       const settings = await settingsRepo.getSettings();
       if (!settings.activeLLM.apiKey) {
@@ -313,7 +346,9 @@ export const CopilotApp: React.FC = () => {
         language: currentLang,
       });
 
-      setThinkingPhase(`${t('preparingStrategicResponse', currentLang)} (${settings.activeLLM.model})`);
+      // Stage 3: Send to LLM
+      console.log(`[TellMeMore:UI] ⚡ [3/4] Requesting strategic response from ${settings.activeLLM.model}...`);
+      setThinkingPhase(`[3/4] ✍️ ${settings.activeLLM.model}...`);
 
       const analysisResp: MessageResponse<ChatAnalysis> = await chrome.runtime.sendMessage<AnalyzeChatMsg>({
         type: 'ANALYZE_CHAT',
@@ -328,6 +363,7 @@ export const CopilotApp: React.FC = () => {
         throw new Error(analysisResp.error || t('analysisLLMError', currentLang));
       }
 
+      console.log(`[TellMeMore:UI] 🎉 [4/4] Analysis successfully parsed in ${Date.now() - startTime}ms`);
       setAnalysis(analysisResp.data);
       analysisRef.current = analysisResp.data;
 
@@ -339,9 +375,9 @@ export const CopilotApp: React.FC = () => {
         });
       }
 
-      setStatusMessage(t('analysisCompleted', currentLang, { count: fetchedMessages.length }));
+      setStatusMessage(`[4/4] ✅ ${t('analysisCompleted', currentLang, { count: fetchedMessages.length })}`);
     } catch (err) {
-      console.error('[CopilotApp] Analysis failed:', err);
+      console.error('[TellMeMore:UI] ❌ Analysis failed:', err);
       setStatusMessage(`${t('errorPrefix', currentLang)}${(err as Error).message}`);
     } finally {
       setIsAnalyzing(false);
@@ -354,10 +390,14 @@ export const CopilotApp: React.FC = () => {
       const tabId = await getActiveTabId();
       if (!tabId) return;
 
-      await sendTabMessageWithFallback<{ type: string; payload: { text: string } }, MessageResponse>(tabId, {
-        type: 'INSERT_DRAFT_TO_CHAT',
-        payload: { text },
-      });
+      await sendTabMessageWithFallback<{ type: string; payload: { text: string } }, MessageResponse>(
+        tabId,
+        {
+          type: 'INSERT_DRAFT_TO_CHAT',
+          payload: { text },
+        },
+        4000
+      );
 
       setStatusMessage(t('insertedToInput', currentLang));
     } catch (err) {
@@ -375,7 +415,7 @@ export const CopilotApp: React.FC = () => {
     dialogueRef.current = newDialogue;
     setPromptText('');
     setIsSendingPrompt(true);
-    setThinkingPhase(t('analyzingTactics', currentLang));
+    setThinkingPhase(`[1/3] 🔍 ${t('readingHistory', currentLang)}...`);
 
     try {
       const settings = await settingsRepo.getSettings();
@@ -393,10 +433,14 @@ export const CopilotApp: React.FC = () => {
           const resp = await sendTabMessageWithFallback<
             { type: string; payload: { depth: number } },
             MessageResponse<ChatMessage[]>
-          >(tabId, {
-            type: 'REQUEST_CRAWL_MESSAGES',
-            payload: { depth: 15 },
-          });
+          >(
+            tabId,
+            {
+              type: 'REQUEST_CRAWL_MESSAGES',
+              payload: { depth: 15 },
+            },
+            4000
+          );
           if (resp?.success && resp.data) {
             contextMessages = resp.data;
             setMessages(contextMessages);
@@ -407,7 +451,7 @@ export const CopilotApp: React.FC = () => {
         }
       }
 
-      setThinkingPhase(`⚡ ${settings.activeLLM.model}...`);
+      setThinkingPhase(`[2/3] 🧠 ${t('analyzingTactics', currentLang)}`);
 
       const sandwichQuery = RAGEngine.buildSandwichPrompt({
         persona: settings.persona,
@@ -417,6 +461,8 @@ export const CopilotApp: React.FC = () => {
         customQuery: query,
         language: currentLang,
       });
+
+      setThinkingPhase(`[3/3] ⚡ ${settings.activeLLM.model}...`);
 
       const response: MessageResponse<ChatAnalysis> = await chrome.runtime.sendMessage<AnalyzeChatMsg>({
         type: 'ANALYZE_CHAT',

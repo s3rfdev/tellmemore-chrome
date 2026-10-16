@@ -124,17 +124,24 @@ export class FacebookCrawler {
     depth: number,
     onProgress?: CrawlProgressCallback
   ): Promise<ChatMessage[]> {
+    const startTime = Date.now();
+    const MAX_CRAWL_DURATION_MS = 3500; // Hard cap 3.5s to prevent any UI freezes
+    console.log(`[TellMeMore:Crawler] 🚀 Starting crawl. Thread: "${threadId}", requested depth: ${depth}`);
+
     const scrollContainer = this.findScrollContainer();
     const messageMap = new Map<string, ChatMessage>();
 
     // Initial capture
     const initialBatch = this.parseVisibleMessages(threadId);
     initialBatch.forEach((m) => messageMap.set(m.id, m));
+    console.log(`[TellMeMore:Crawler] 📦 Initial visible messages parsed: ${initialBatch.length}`);
 
     onProgress?.(messageMap.size, depth, `Найдено ${messageMap.size} сообщений...`);
 
     if (!scrollContainer || messageMap.size >= depth) {
-      return Array.from(messageMap.values()).slice(-depth);
+      const res = Array.from(messageMap.values()).slice(-depth);
+      console.log(`[TellMeMore:Crawler] ✅ Crawl finished immediately (${res.length} msgs)`);
+      return res;
     }
 
     // Save initial scroll state to restore later
@@ -143,43 +150,59 @@ export class FacebookCrawler {
 
     let previousHeight = initialScrollHeight;
     let attemptsWithoutNewMessages = 0;
-    const maxAttempts = 15;
+    const maxAttempts = 10;
 
-    for (let attempt = 0; attempt < maxAttempts && messageMap.size < depth; attempt++) {
-      onProgress?.(
-        messageMap.size,
-        depth,
-        `Загрузка более ранних сообщений (${messageMap.size} / ${depth})...`
-      );
-
-      // Scroll smoothly to the top of container to trigger loading of previous messages
-      scrollContainer.scrollTop = 0;
-
-      // Wait for Facebook to fetch and render
-      await new Promise((resolve) => setTimeout(resolve, 350));
-
-      const batch = this.parseVisibleMessages(threadId);
-      const prevSize = messageMap.size;
-      batch.forEach((m) => messageMap.set(m.id, m));
-
-      const newScrollHeight = scrollContainer.scrollHeight;
-      if (messageMap.size === prevSize && newScrollHeight === previousHeight) {
-        attemptsWithoutNewMessages++;
-        if (attemptsWithoutNewMessages >= 3) {
-          // Reached the very top of history
+    try {
+      for (let attempt = 0; attempt < maxAttempts && messageMap.size < depth; attempt++) {
+        // Enforce hard time limit
+        if (Date.now() - startTime > MAX_CRAWL_DURATION_MS) {
+          console.log(`[TellMeMore:Crawler] ⏱️ Reached time cap (${MAX_CRAWL_DURATION_MS}ms). Ending scroll.`);
           break;
         }
-      } else {
-        attemptsWithoutNewMessages = 0;
+
+        onProgress?.(
+          messageMap.size,
+          depth,
+          `Загрузка более ранних сообщений (${messageMap.size} / ${depth})...`
+        );
+
+        // Scroll to top to trigger loading earlier messages
+        scrollContainer.scrollTop = 0;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+
+        const batch = this.parseVisibleMessages(threadId);
+        const prevSize = messageMap.size;
+        batch.forEach((m) => messageMap.set(m.id, m));
+
+        const newScrollHeight = scrollContainer.scrollHeight;
+        if (messageMap.size === prevSize && newScrollHeight === previousHeight) {
+          attemptsWithoutNewMessages++;
+          if (attemptsWithoutNewMessages >= 2) {
+            console.log(`[TellMeMore:Crawler] 🏁 Reached top of history after ${attempt + 1} scroll attempts.`);
+            break;
+          }
+        } else {
+          attemptsWithoutNewMessages = 0;
+        }
+        previousHeight = newScrollHeight;
       }
-      previousHeight = newScrollHeight;
+    } catch (crawlErr) {
+      console.warn('[TellMeMore:Crawler] ⚠️ Warning during scroll attempt:', crawlErr);
+    } finally {
+      // Always restore scroll position
+      try {
+        scrollContainer.scrollTop = initialScrollTop + (scrollContainer.scrollHeight - initialScrollHeight);
+      } catch {
+        // Ignore scroll restoration errors
+      }
     }
 
-    // Restore scroll position so user sees what they were looking at
-    scrollContainer.scrollTop = initialScrollTop + (scrollContainer.scrollHeight - initialScrollHeight);
+    const finalMessages = Array.from(messageMap.values()).slice(-depth);
+    console.log(
+      `[TellMeMore:Crawler] ✅ Crawl complete in ${Date.now() - startTime}ms. Extracted ${finalMessages.length} messages.`
+    );
+    onProgress?.(finalMessages.length, depth, `Сбор завершён: ${finalMessages.length} сообщений`);
 
-    onProgress?.(messageMap.size, depth, `Сбор завершён: ${messageMap.size} сообщений`);
-
-    return Array.from(messageMap.values()).slice(-depth);
+    return finalMessages;
   }
 }
