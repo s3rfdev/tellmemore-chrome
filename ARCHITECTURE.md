@@ -157,11 +157,14 @@ tellmemore_chrome/
 * `GroqWhisperService`: Транскрибация через Groq Whisper / OpenAI Whisper.
 * `STTFactory`: Фабрика провайдеров транскрибации.
 
-### `src/services/media/image-processor.ts`
-* `ImageProcessor`:
+### `src/services/media/`
+* `image-processor.ts`:
   * `compressImage(url, maxDimension, quality)`: Ужатие фото на Offscreen Canvas до макс. 800px JPEG quality 70%.
   * `hashImageUrl(url)`: Хэширование для кэша.
   * `getOrSummarizeImage(url, visionCallback)`: Однократная отправка на Vision LLM и сохранение текстового описания в IndexedDB `media_cache`.
+* `media-enricher.ts`:
+  * `MediaEnricherService`: Централизованный конвейер предобработки медиа перед отправкой в LLM. Проверяет хэши в IndexedDB, сжимает и транскрибирует только новые файлы ровно 1 раз, заменяя их в контексте на компактные текстовые теги: `[Фото: "Смета на 120 000 руб"]`, `[Голосовое: "..."]`.
+  * Видеоролики и тяжёлые файлы **никогда не пересылаются в виде бинарных данных**, а маркируются мета-тегами для 100% защиты токенов и трафика.
 
 ### `src/services/rag/rag-engine.ts`
 * `RAGEngine`:
