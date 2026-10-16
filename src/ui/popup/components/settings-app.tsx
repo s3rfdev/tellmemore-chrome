@@ -1,6 +1,6 @@
 /**
  * @file src/ui/popup/components/settings-app.tsx
- * @description Settings UI with dynamic model fetching, Z-AI & Deepgram support, and custom prompt templates.
+ * @description Settings UI with dynamic model fetching, Z-AI & Deepgram, custom prompts, and 6-language auto-localization.
  */
 
 import React, { useState, useEffect } from 'react';
@@ -8,6 +8,12 @@ import { UserSettings, DEFAULT_USER_SETTINGS, LLMProviderType, STTProviderType }
 import { ChromeStorageSettingsRepository } from '../../../services/storage/chat-repository';
 import { DEFAULT_PROMPT_TEMPLATES, PromptTemplateConfig } from '../../../core/prompts/prompt-templates';
 import { FetchModelsMsg, MessageResponse } from '../../../infra/messaging/message-types';
+import {
+  LanguageCode,
+  SUPPORTED_LANGUAGES,
+  detectSystemLanguage,
+  t,
+} from '../../../core/i18n/translations';
 
 const settingsRepo = new ChromeStorageSettingsRepository();
 
@@ -29,15 +35,19 @@ export const SettingsApp: React.FC = () => {
   const [modelsList, setModelsList] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Compute active language: auto-detect system language or use manual preference
+  const currentLang: LanguageCode =
+    settings.language === 'auto' ? detectSystemLanguage() : (settings.language as LanguageCode);
+
   useEffect(() => {
     settingsRepo.getSettings().then(async (loaded) => {
       const ext = loaded as ExtendedUserSettings;
       setSettings({
         ...ext,
+        language: ext.language || 'auto',
         promptTemplates: ext.promptTemplates || DEFAULT_PROMPT_TEMPLATES,
       });
 
-      // If key is set, auto-fetch models
       if (ext.activeLLM.apiKey) {
         fetchModels(ext.activeLLM.provider, ext.activeLLM.apiKey, ext.activeLLM.endpointUrl);
       }
@@ -71,7 +81,7 @@ export const SettingsApp: React.FC = () => {
   const handleSave = async () => {
     try {
       await settingsRepo.saveSettings(settings);
-      setSaveStatus('Настройки успешно сохранены ✓');
+      setSaveStatus(t('settingsSaved', currentLang));
       setTimeout(() => setSaveStatus(null), 3000);
     } catch (err) {
       setSaveStatus(`Ошибка: ${(err as Error).message}`);
@@ -79,7 +89,7 @@ export const SettingsApp: React.FC = () => {
   };
 
   if (loading) {
-    return <div className="p-4 text-center text-zinc-400">Загрузка настроек...</div>;
+    return <div className="p-4 text-center text-zinc-400">Loading...</div>;
   }
 
   return (
@@ -91,8 +101,8 @@ export const SettingsApp: React.FC = () => {
             ✨
           </div>
           <div>
-            <h1 className="font-semibold text-sm leading-tight text-white">TellMeMore Copilot</h1>
-            <p className="text-[11px] text-zinc-400">Универсальный переговорный AI-ассистент</p>
+            <h1 className="font-semibold text-sm leading-tight text-white">{t('appTitle', currentLang)}</h1>
+            <p className="text-[11px] text-zinc-400">{t('appSubtitle', currentLang)}</p>
           </div>
         </div>
       </div>
@@ -105,7 +115,7 @@ export const SettingsApp: React.FC = () => {
             activeTab === 'ai' ? 'bg-indigo-600 text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          AI & STT
+          {t('aiTab', currentLang)}
         </button>
         <button
           onClick={() => setActiveTab('persona')}
@@ -113,7 +123,7 @@ export const SettingsApp: React.FC = () => {
             activeTab === 'persona' ? 'bg-indigo-600 text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          Персона
+          {t('personaTab', currentLang)}
         </button>
         <button
           onClick={() => setActiveTab('prompts')}
@@ -121,7 +131,7 @@ export const SettingsApp: React.FC = () => {
             activeTab === 'prompts' ? 'bg-indigo-600 text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          Промпты
+          {t('promptsTab', currentLang)}
         </button>
         <button
           onClick={() => setActiveTab('general')}
@@ -129,7 +139,7 @@ export const SettingsApp: React.FC = () => {
             activeTab === 'general' ? 'bg-indigo-600 text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          Параметры
+          {t('generalTab', currentLang)}
         </button>
       </div>
 
@@ -137,7 +147,7 @@ export const SettingsApp: React.FC = () => {
       {activeTab === 'ai' && (
         <div className="flex flex-col gap-2.5">
           <div>
-            <label className="block text-zinc-300 font-medium mb-1">Основная нейросеть (LLM)</label>
+            <label className="block text-zinc-300 font-medium mb-1">{t('primaryLLM', currentLang)}</label>
             <select
               value={settings.activeLLM.provider}
               onChange={(e) => {
@@ -159,7 +169,7 @@ export const SettingsApp: React.FC = () => {
               }}
               className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500"
             >
-              <option value="gemini">Google Gemini (Gemini 3.5 / 3.7 / 2.5 Flash)</option>
+              <option value="gemini">Google Gemini (Gemini 3.7 / 3.5 / 2.5 Flash)</option>
               <option value="zai">Z-AI (Zhipu GLM-4.5 / GLM-5)</option>
               <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
               <option value="xai">xAI (Grok)</option>
@@ -168,7 +178,7 @@ export const SettingsApp: React.FC = () => {
           </div>
 
           <div>
-            <label className="block text-zinc-300 font-medium mb-1">API-ключ LLM</label>
+            <label className="block text-zinc-300 font-medium mb-1">{t('llmApiKey', currentLang)}</label>
             <input
               type="password"
               value={settings.activeLLM.apiKey}
@@ -178,21 +188,21 @@ export const SettingsApp: React.FC = () => {
                   activeLLM: { ...settings.activeLLM, apiKey: e.target.value },
                 })
               }
-              placeholder="Вставьте ваш API-ключ..."
+              placeholder="API Key..."
               className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500 font-mono text-[11px]"
             />
           </div>
 
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="text-zinc-300 font-medium">Активная модель</label>
+              <label className="text-zinc-300 font-medium">{t('activeModel', currentLang)}</label>
               <button
                 type="button"
                 onClick={handleManualFetchModels}
                 disabled={isFetchingModels || !settings.activeLLM.apiKey}
                 className="text-[10px] text-indigo-400 hover:text-indigo-300 disabled:opacity-50 underline"
               >
-                {isFetchingModels ? 'Загрузка...' : '⚡ Загрузить список моделей с сервера'}
+                {isFetchingModels ? '...' : t('fetchModelsBtn', currentLang)}
               </button>
             </div>
 
@@ -233,7 +243,7 @@ export const SettingsApp: React.FC = () => {
 
           {/* STT Section */}
           <div>
-            <label className="block text-zinc-300 font-medium mb-1">Сервис транскрибации речи (STT)</label>
+            <label className="block text-zinc-300 font-medium mb-1">{t('sttService', currentLang)}</label>
             <select
               value={settings.activeSTT.provider}
               onChange={(e) =>
@@ -253,14 +263,14 @@ export const SettingsApp: React.FC = () => {
               }
               className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500"
             >
-              <option value="deepgram">Deepgram Nova-2 (Сверхбыстрый, высокая точность)</option>
+              <option value="deepgram">Deepgram Nova-2 (Fast & Accurate)</option>
               <option value="groq_whisper">Groq Whisper (Turbo)</option>
               <option value="openai_whisper">OpenAI Whisper</option>
             </select>
           </div>
 
           <div>
-            <label className="block text-zinc-300 font-medium mb-1">API-ключ транскрибации</label>
+            <label className="block text-zinc-300 font-medium mb-1">{t('sttApiKey', currentLang)}</label>
             <input
               type="password"
               value={settings.activeSTT.apiKey}
@@ -270,7 +280,7 @@ export const SettingsApp: React.FC = () => {
                   activeSTT: { ...settings.activeSTT, apiKey: e.target.value },
                 })
               }
-              placeholder="API-ключ Deepgram или Whisper..."
+              placeholder="API Key..."
               className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500 font-mono text-[11px]"
             />
           </div>
@@ -281,7 +291,7 @@ export const SettingsApp: React.FC = () => {
       {activeTab === 'persona' && (
         <div className="flex flex-col gap-2.5">
           <div>
-            <label className="block text-zinc-300 font-medium mb-1">Ваше имя / псевдоним</label>
+            <label className="block text-zinc-300 font-medium mb-1">{t('userNameLabel', currentLang)}</label>
             <input
               type="text"
               value={settings.persona.userName}
@@ -296,7 +306,7 @@ export const SettingsApp: React.FC = () => {
           </div>
 
           <div>
-            <label className="block text-zinc-300 font-medium mb-1">Ваша роль / позиция</label>
+            <label className="block text-zinc-300 font-medium mb-1">{t('userRoleLabel', currentLang)}</label>
             <input
               type="text"
               value={settings.persona.userRole}
@@ -306,13 +316,13 @@ export const SettingsApp: React.FC = () => {
                   persona: { ...settings.persona, userRole: e.target.value },
                 })
               }
-              placeholder="Руководитель, переговорщик, основатель"
+              placeholder={t('userRolePlaceholder', currentLang)}
               className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500"
             />
           </div>
 
           <div>
-            <label className="block text-zinc-300 font-medium mb-1">Глобальные цели в переговорах</label>
+            <label className="block text-zinc-300 font-medium mb-1">{t('globalGoalsLabel', currentLang)}</label>
             <textarea
               rows={2}
               value={settings.persona.communicationGoals}
@@ -322,13 +332,12 @@ export const SettingsApp: React.FC = () => {
                   persona: { ...settings.persona, communicationGoals: e.target.value },
                 })
               }
-              placeholder="Защита границ, выявление скрытых мотивов, закрытие сделок"
               className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500 resize-none text-[11px]"
             />
           </div>
 
           <div>
-            <label className="block text-zinc-300 font-medium mb-1">Предпочитаемый тон ответов</label>
+            <label className="block text-zinc-300 font-medium mb-1">{t('toneLabel', currentLang)}</label>
             <input
               type="text"
               value={settings.persona.preferredTone}
@@ -338,7 +347,7 @@ export const SettingsApp: React.FC = () => {
                   persona: { ...settings.persona, preferredTone: e.target.value },
                 })
               }
-              placeholder="Дипломатичный, спокойный, решительный, лаконичный"
+              placeholder={t('tonePlaceholder', currentLang)}
               className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500"
             />
           </div>
@@ -349,12 +358,12 @@ export const SettingsApp: React.FC = () => {
       {activeTab === 'prompts' && (
         <div className="flex flex-col gap-2.5">
           <p className="text-[11px] text-zinc-400">
-            Все промпты полностью настраиваемы. Доступные переменные:
-            <code className="text-indigo-300"> {'{{userName}}'}, {'{{contactGoals}}'}, {'{{ragMemory}}'}, {'{{recentMessages}}'}</code>
+            Variables:
+            <code className="text-indigo-300"> {'{{userName}}'}, {'{{contactGoals}}'}, {'{{ragMemory}}'}, {'{{recentMessages}}'}, {'{{language}}'}</code>
           </p>
 
           <div>
-            <label className="block text-zinc-300 font-medium mb-1">Шаблон анализа (Сэндвич-структура)</label>
+            <label className="block text-zinc-300 font-medium mb-1">Sandwich Analysis Prompt Template</label>
             <textarea
               rows={6}
               value={settings.promptTemplates?.analysisPromptTemplate || ''}
@@ -381,17 +390,47 @@ export const SettingsApp: React.FC = () => {
             }
             className="text-[10px] text-zinc-400 hover:text-zinc-200 underline text-left"
           >
-            Сбросить промпты к системным значениям по умолчанию
+            Reset prompts to defaults
           </button>
         </div>
       )}
 
-      {/* Tab: General Parameters */}
+      {/* Tab: General Parameters & Language Selection */}
       {activeTab === 'general' && (
         <div className="flex flex-col gap-3">
+          {/* Language Selector */}
+          <div>
+            <label className="block text-zinc-300 font-medium mb-1">{t('languageLabel', currentLang)}</label>
+            <select
+              value={settings.language || 'auto'}
+              onChange={(e) =>
+                setSettings({
+                  ...settings,
+                  language: e.target.value as 'auto' | LanguageCode,
+                })
+              }
+              className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-zinc-200 focus:outline-none focus:border-indigo-500"
+            >
+              <option value="auto">
+                🌐 {t('autoLang', currentLang)} ({SUPPORTED_LANGUAGES.find((l) => l.code === detectSystemLanguage())?.nativeName || 'English'})
+              </option>
+              {SUPPORTED_LANGUAGES.map((lang) => (
+                <option key={lang.code} value={lang.code}>
+                  {lang.nativeName} ({lang.name})
+                </option>
+              ))}
+            </select>
+            <p className="text-[10px] text-zinc-500 mt-1">
+              Автоматически определяет язык системы (Windows, macOS) или переключается на выбранный язык.
+            </p>
+          </div>
+
+          <hr className="border-zinc-800 my-1" />
+
+          {/* Crawl depth */}
           <div>
             <label className="block text-zinc-300 font-medium mb-1">
-              Лимит сообщений для RAG-анализа по умолчанию
+              {t('crawlLimitLabel', currentLang)}
             </label>
             <div className="flex items-center gap-3">
               <input
@@ -409,12 +448,9 @@ export const SettingsApp: React.FC = () => {
                 className="flex-1 accent-indigo-600"
               />
               <span className="font-semibold text-indigo-400 w-16 text-right">
-                {settings.defaultCrawlDepth} шт.
+                {settings.defaultCrawlDepth}
               </span>
             </div>
-            <p className="text-[10px] text-zinc-500 mt-1">
-              При сборе свыше 30 сообщений включается автоматический RAG: активные сообщения идут в прямой контекст, а более ранние — в семантическую выборку.
-            </p>
           </div>
         </div>
       )}
@@ -424,13 +460,13 @@ export const SettingsApp: React.FC = () => {
         {saveStatus ? (
           <span className="text-[11px] text-emerald-400 font-medium">{saveStatus}</span>
         ) : (
-          <span className="text-[10px] text-zinc-500">Ключи хранятся только локально в браузере</span>
+          <span className="text-[10px] text-zinc-500">Local secure storage</span>
         )}
         <button
           onClick={handleSave}
           className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs font-semibold shadow-md shadow-indigo-600/20 transition"
         >
-          Сохранить
+          {t('save', currentLang)}
         </button>
       </div>
     </div>

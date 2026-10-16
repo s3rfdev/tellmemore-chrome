@@ -4,6 +4,7 @@
  */
 
 import { ChatMessage } from '../../core/entities/message';
+import { ChatThread } from '../../core/entities/thread';
 import { UserSettings, PersonaGoals } from '../../core/entities/settings';
 
 export type ExtensionMessageType =
@@ -19,7 +20,8 @@ export type ExtensionMessageType =
   | 'FETCH_AVAILABLE_MODELS'
   | 'GET_CONTACT_PROFILE'
   | 'SAVE_CONTACT_PROFILE'
-  | 'NEW_CHAT_MESSAGE_DETECTED';
+  | 'NEW_CHAT_MESSAGE_DETECTED'
+  | 'ACTIVE_THREAD_CHANGED';
 
 export interface BaseMessage<T extends ExtensionMessageType, P> {
   type: T;
@@ -86,6 +88,7 @@ export interface SaveContactProfilePayload {
 export type SaveContactProfileMsg = BaseMessage<'SAVE_CONTACT_PROFILE', SaveContactProfilePayload>;
 
 export type NewChatMessageMsg = BaseMessage<'NEW_CHAT_MESSAGE_DETECTED', ChatMessage>;
+export type ActiveThreadChangedMsg = BaseMessage<'ACTIVE_THREAD_CHANGED', ChatThread>;
 
 export type ExtensionMessage =
   | GetSettingsMsg
@@ -100,7 +103,8 @@ export type ExtensionMessage =
   | FetchModelsMsg
   | GetContactProfileMsg
   | SaveContactProfileMsg
-  | NewChatMessageMsg;
+  | NewChatMessageMsg
+  | ActiveThreadChangedMsg;
 
 export interface MessageResponse<T = unknown> {
   success: boolean;

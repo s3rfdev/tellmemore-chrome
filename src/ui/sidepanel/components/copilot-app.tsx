@@ -1,6 +1,7 @@
 /**
  * @file src/ui/sidepanel/components/copilot-app.tsx
- * @description Senior Minimalist Copilot SidePanel with Live Ingestion, Thinking Pipeline, and Dossier.
+ * @description Senior Minimalist Copilot SidePanel with Live Ingestion, Thinking Pipeline,
+ * Per-Interlocutor Session Persistence, Automatic Thread Detection, and Full 6-Language Localization.
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -12,6 +13,7 @@ import { AudioRecorderService } from '../../../services/audio/audio-recorder';
 import { RAGEngine } from '../../../services/rag/rag-engine';
 import { sendTabMessageWithFallback } from '../../../infra/messaging/tab-messenger';
 import { SettingsApp } from '../../popup/components/settings-app';
+import { t, detectSystemLanguage, LanguageCode } from '../../../core/i18n/translations';
 import {
   AnalyzeChatMsg,
   TranscribeAudioMsg,
@@ -29,6 +31,7 @@ const chatRepo = new IndexedDBChatRepository();
 
 export const CopilotApp: React.FC = () => {
   const [activeView, setActiveView] = useState<'copilot' | 'settings'>('copilot');
+  const [currentLang, setCurrentLang] = useState<LanguageCode>(detectSystemLanguage());
 
   const [thread, setThread] = useState<ChatThread | null>(null);
   const [contact, setContact] = useState<ContactProfile>({
@@ -40,6 +43,7 @@ export const CopilotApp: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [analysis, setAnalysis] = useState<ChatAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [thinkingPhase, setThinkingPhase] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('Чат готов');
   const [crawlDepth, setCrawlDepth] = useState<number>(30);
@@ -62,16 +66,99 @@ export const CopilotApp: React.FC = () => {
 
   const dialogueEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll
+  // Refs for state snapshotting to avoid race conditions when switching threads
+  const currentThreadIdRef = useRef<string | null>(null);
+  const dialogueRef = useRef<DialogueMessage[]>(dialogue);
+  const analysisRef = useRef<ChatAnalysis | null>(analysis);
+  const contactGoalsRef = useRef<string>(contactGoals);
+
+  useEffect(() => {
+    dialogueRef.current = dialogue;
+  }, [dialogue]);
+
+  useEffect(() => {
+    analysisRef.current = analysis;
+  }, [analysis]);
+
+  useEffect(() => {
+    contactGoalsRef.current = contactGoals;
+  }, [contactGoals]);
+
+  // Auto-scroll on new message or thinking status
   useEffect(() => {
     dialogueEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [dialogue, thinkingPhase]);
+
+  // Save current thread's dialogue and analysis session to IndexedDB
+  const saveCurrentSession = async (targetThreadId?: string) => {
+    const id = targetThreadId || currentThreadIdRef.current;
+    if (!id) return;
+    try {
+      await chatRepo.saveCopilotSession(id, {
+        dialogue: dialogueRef.current,
+        analysis: analysisRef.current,
+        goals: contactGoalsRef.current,
+      });
+    } catch (err) {
+      console.warn('[CopilotApp] Failed to save session:', err);
+    }
+  };
+
+  // Switch to a new thread with full restoration of Copilot dialogue and dossier
+  const switchThread = async (newThread: ChatThread) => {
+    const oldId = currentThreadIdRef.current;
+    if (oldId && oldId !== newThread.id) {
+      await saveCurrentSession(oldId);
+    }
+
+    currentThreadIdRef.current = newThread.id;
+    setThread(newThread);
+
+    // 1. Restore contact notes
+    const savedContact = await chatRepo.getThread(newThread.id);
+    if (savedContact?.contact) {
+      setContact(savedContact.contact);
+      setContactNotes(savedContact.contact.notes || '');
+    } else {
+      setContact(newThread.contact);
+      setContactNotes('');
+    }
+
+    // 2. Restore Copilot session (dialogue history, analysis, goals)
+    const savedSession = await chatRepo.getCopilotSession(newThread.id);
+    if (savedSession) {
+      setDialogue(savedSession.dialogue || []);
+      dialogueRef.current = savedSession.dialogue || [];
+      setAnalysis(savedSession.analysis || null);
+      analysisRef.current = savedSession.analysis || null;
+      setContactGoals(savedSession.goals || '');
+      contactGoalsRef.current = savedSession.goals || '';
+    } else {
+      setDialogue([]);
+      dialogueRef.current = [];
+      setAnalysis(null);
+      analysisRef.current = null;
+      setContactGoals('');
+      contactGoalsRef.current = '';
+    }
+
+    // 3. Restore in-memory chat messages
+    const cached = await chatRepo.getMessages(newThread.id, 100);
+    setMessages(cached);
+    setNewMessagesCounter(0);
+
+    setStatusMessage(
+      cached.length > 0
+        ? t('inMemoryCount', currentLang, { count: cached.length })
+        : t('threadSwitched', currentLang, { name: newThread.title })
+    );
+  };
 
   // Sync active thread and real-time live message listener
   useEffect(() => {
     loadActiveThread();
 
-    // Listen for real-time messages detected in the active chat
+    // Listen for real-time messages and thread changes detected in the active messenger tab
     const messageListener = (msg: ExtensionMessage) => {
       if (msg.type === 'NEW_CHAT_MESSAGE_DETECTED') {
         const incoming = msg.payload;
@@ -80,7 +167,12 @@ export const CopilotApp: React.FC = () => {
           setNewMessagesCounter((c) => c + 1);
           return [...prev, incoming];
         });
-        setStatusMessage('Новое сообщение в чате синхронизировано ✓');
+        setStatusMessage(t('newMessagesSynced', currentLang));
+      } else if (msg.type === 'ACTIVE_THREAD_CHANGED') {
+        const newThread = msg.payload;
+        if (newThread.id !== currentThreadIdRef.current) {
+          switchThread(newThread);
+        }
       }
     };
 
@@ -94,8 +186,11 @@ export const CopilotApp: React.FC = () => {
     return () => {
       chrome.runtime.onMessage.removeListener(messageListener);
       chrome.tabs.onActivated?.removeListener(onTabActivated);
+      if (currentThreadIdRef.current) {
+        saveCurrentSession(currentThreadIdRef.current);
+      }
     };
-  }, []);
+  }, [currentLang]);
 
   const getActiveTabId = async (): Promise<number | null> => {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -104,8 +199,15 @@ export const CopilotApp: React.FC = () => {
 
   const loadActiveThread = async () => {
     try {
+      const settings = await settingsRepo.getSettings();
+      const lang = settings.language === 'auto' ? detectSystemLanguage() : (settings.language as LanguageCode);
+      setCurrentLang(lang);
+
       const tabId = await getActiveTabId();
-      if (!tabId) return;
+      if (!tabId) {
+        setStatusMessage(t('openChatTab', lang));
+        return;
+      }
 
       const response = await sendTabMessageWithFallback<{ type: string }, MessageResponse<ChatThread>>(
         tabId,
@@ -113,25 +215,42 @@ export const CopilotApp: React.FC = () => {
       );
 
       if (response?.success && response.data) {
-        const currentThread: ChatThread = response.data;
-        setThread(currentThread);
-
-        const savedContact = await chatRepo.getThread(currentThread.id);
-        if (savedContact?.contact) {
-          setContact(savedContact.contact);
-          setContactNotes(savedContact.contact.notes || '');
-        } else {
-          setContact(currentThread.contact);
-        }
-
-        const cached = await chatRepo.getMessages(currentThread.id, 100);
-        if (cached.length > 0) {
-          setMessages(cached);
-          setStatusMessage(`В памяти: ${cached.length} сообщений`);
-        }
+        await switchThread(response.data);
+      } else {
+        setStatusMessage(t('openChatTab', lang));
       }
     } catch {
-      setStatusMessage('Откройте вкладку с чатом');
+      setStatusMessage(t('openChatTab', currentLang));
+    }
+  };
+
+  // Manual refresh / sync button handler
+  const handleManualSync = async () => {
+    try {
+      setIsSyncing(true);
+      setStatusMessage(t('analyzing', currentLang));
+
+      const tabId = await getActiveTabId();
+      if (!tabId) {
+        setStatusMessage(t('tabNotFound', currentLang));
+        return;
+      }
+
+      const response = await sendTabMessageWithFallback<{ type: string }, MessageResponse<ChatThread>>(
+        tabId,
+        { type: 'GET_CURRENT_THREAD' }
+      );
+
+      if (response?.success && response.data) {
+        await switchThread(response.data);
+        setStatusMessage(t('syncCompleted', currentLang));
+      } else {
+        setStatusMessage(t('openChatTab', currentLang));
+      }
+    } catch (err) {
+      setStatusMessage(`${t('errorPrefix', currentLang)}${(err as Error).message}`);
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -143,8 +262,9 @@ export const CopilotApp: React.FC = () => {
     };
     setContact(updatedContact);
     await chatRepo.saveContactProfile(updatedContact);
+    await saveCurrentSession(thread.id);
     setIsDossierOpen(false);
-    setStatusMessage('Досье сохранено ✓');
+    setStatusMessage(t('dossierSaved', currentLang));
   };
 
   // 1. Fetch & analyze messages from active chat with RAG & Sandwich Principle
@@ -152,10 +272,10 @@ export const CopilotApp: React.FC = () => {
     const depth = targetDepth || crawlDepth;
     try {
       setIsAnalyzing(true);
-      setThinkingPhase('🔍 Чтение истории диалога...');
+      setThinkingPhase(t('readingHistory', currentLang));
 
       const tabId = await getActiveTabId();
-      if (!tabId) throw new Error('Вкладка не найдена');
+      if (!tabId) throw new Error(t('tabNotFound', currentLang));
 
       const crawlResp = await sendTabMessageWithFallback<
         { type: string; payload: { depth: number } },
@@ -166,19 +286,19 @@ export const CopilotApp: React.FC = () => {
       });
 
       if (!crawlResp?.success || !crawlResp.data) {
-        throw new Error(crawlResp?.error || 'Не удалось прочитать сообщения');
+        throw new Error(crawlResp?.error || t('failedReadMessages', currentLang));
       }
 
       const fetchedMessages: ChatMessage[] = crawlResp.data;
       setMessages(fetchedMessages);
       setNewMessagesCounter(0);
 
-      setThinkingPhase('🧠 RAG-анализ манипуляций и скрытых мотивов...');
+      setThinkingPhase(t('analyzingTactics', currentLang));
 
       const settings = await settingsRepo.getSettings();
       if (!settings.activeLLM.apiKey) {
         setActiveView('settings');
-        throw new Error('Пожалуйста, укажите API-ключ в настройках.');
+        throw new Error(t('specifyApiKey', currentLang));
       }
 
       const sandwichPrompt = RAGEngine.buildSandwichPrompt({
@@ -189,10 +309,11 @@ export const CopilotApp: React.FC = () => {
         },
         allMessages: fetchedMessages,
         activeMessagesCount: 20,
-        customQuery: contactGoals ? `Моя цель по этому человеку: "${contactGoals}"` : undefined,
+        customQuery: contactGoals ? `${t('myGoalsLabel', currentLang)} "${contactGoals}"` : undefined,
+        language: currentLang,
       });
 
-      setThinkingPhase(`✍️ Формирование стратегического ответа (${settings.activeLLM.model})...`);
+      setThinkingPhase(`${t('preparingStrategicResponse', currentLang)} (${settings.activeLLM.model})`);
 
       const analysisResp: MessageResponse<ChatAnalysis> = await chrome.runtime.sendMessage<AnalyzeChatMsg>({
         type: 'ANALYZE_CHAT',
@@ -204,14 +325,24 @@ export const CopilotApp: React.FC = () => {
       });
 
       if (!analysisResp.success || !analysisResp.data) {
-        throw new Error(analysisResp.error || 'Ошибка анализа LLM');
+        throw new Error(analysisResp.error || t('analysisLLMError', currentLang));
       }
 
       setAnalysis(analysisResp.data);
-      setStatusMessage(`Анализ ${fetchedMessages.length} сообщений завершён ✓`);
+      analysisRef.current = analysisResp.data;
+
+      if (thread?.id) {
+        await chatRepo.saveCopilotSession(thread.id, {
+          dialogue: dialogueRef.current,
+          analysis: analysisResp.data,
+          goals: contactGoalsRef.current,
+        });
+      }
+
+      setStatusMessage(t('analysisCompleted', currentLang, { count: fetchedMessages.length }));
     } catch (err) {
       console.error('[CopilotApp] Analysis failed:', err);
-      setStatusMessage(`Ошибка: ${(err as Error).message}`);
+      setStatusMessage(`${t('errorPrefix', currentLang)}${(err as Error).message}`);
     } finally {
       setIsAnalyzing(false);
       setThinkingPhase(null);
@@ -228,9 +359,9 @@ export const CopilotApp: React.FC = () => {
         payload: { text },
       });
 
-      setStatusMessage('Ответ вставлен в поле ввода ✓');
+      setStatusMessage(t('insertedToInput', currentLang));
     } catch (err) {
-      setStatusMessage(`Ошибка вставки: ${(err as Error).message}`);
+      setStatusMessage(`${t('errorPrefix', currentLang)}${(err as Error).message}`);
     }
   };
 
@@ -241,16 +372,17 @@ export const CopilotApp: React.FC = () => {
 
     const newDialogue = [...dialogue, { role: 'user' as const, content: query }];
     setDialogue(newDialogue);
+    dialogueRef.current = newDialogue;
     setPromptText('');
     setIsSendingPrompt(true);
-    setThinkingPhase('🧠 Подготовка ответа с учётом контекста переписки...');
+    setThinkingPhase(t('analyzingTactics', currentLang));
 
     try {
       const settings = await settingsRepo.getSettings();
 
       if (!settings.activeLLM.apiKey) {
         setActiveView('settings');
-        throw new Error('Укажите API-ключ в настройках.');
+        throw new Error(t('specifyApiKey', currentLang));
       }
 
       // Delta-sync: pull any fresh messages from DOM
@@ -275,7 +407,7 @@ export const CopilotApp: React.FC = () => {
         }
       }
 
-      setThinkingPhase(`⚡ Анализ через ${settings.activeLLM.model}...`);
+      setThinkingPhase(`⚡ ${settings.activeLLM.model}...`);
 
       const sandwichQuery = RAGEngine.buildSandwichPrompt({
         persona: settings.persona,
@@ -283,6 +415,7 @@ export const CopilotApp: React.FC = () => {
         allMessages: contextMessages,
         activeMessagesCount: 15,
         customQuery: query,
+        language: currentLang,
       });
 
       const response: MessageResponse<ChatAnalysis> = await chrome.runtime.sendMessage<AnalyzeChatMsg>({
@@ -298,21 +431,33 @@ export const CopilotApp: React.FC = () => {
         const answer =
           response.data.situationSummary +
           (response.data.manipulationVerdict.explanation
-            ? `\n\n🔍 Разбор: ${response.data.manipulationVerdict.explanation}`
+            ? `\n\n🔍 ${t('breakdown', currentLang)}: ${response.data.manipulationVerdict.explanation}`
             : '') +
           (response.data.suggestedReplies?.[0]
-            ? `\n\n💡 Рекомендуемый ход:\n"${response.data.suggestedReplies[0].text}"`
+            ? `\n\n💡 ${t('recommendedMove', currentLang)}:\n"${response.data.suggestedReplies[0].text}"`
             : '');
 
-        setDialogue([...newDialogue, { role: 'assistant', content: answer }]);
+        const updatedDialogue = [...newDialogue, { role: 'assistant' as const, content: answer }];
+        setDialogue(updatedDialogue);
+        dialogueRef.current = updatedDialogue;
+
+        if (thread?.id) {
+          await chatRepo.saveCopilotSession(thread.id, {
+            dialogue: updatedDialogue,
+            analysis: analysisRef.current,
+            goals: contactGoalsRef.current,
+          });
+        }
       } else {
         throw new Error(response.error || 'No response');
       }
     } catch (err) {
-      setDialogue([
+      const updatedDialogue = [
         ...newDialogue,
-        { role: 'assistant', content: `Ошибка: ${(err as Error).message}` },
-      ]);
+        { role: 'assistant' as const, content: `${t('errorPrefix', currentLang)}${(err as Error).message}` },
+      ];
+      setDialogue(updatedDialogue);
+      dialogueRef.current = updatedDialogue;
     } finally {
       setIsSendingPrompt(false);
       setThinkingPhase(null);
@@ -325,7 +470,7 @@ export const CopilotApp: React.FC = () => {
     if (isRecording) {
       setIsRecording(false);
       try {
-        setThinkingPhase('🎙️ Транскрибация голоса...');
+        setThinkingPhase(t('transcribingVoice', currentLang));
         const result = await recorderRef.current?.stopRecording();
         if (result) {
           const transcribeResp: MessageResponse<string> = await chrome.runtime.sendMessage<TranscribeAudioMsg>({
@@ -341,7 +486,7 @@ export const CopilotApp: React.FC = () => {
           }
         }
       } catch (err) {
-        setStatusMessage(`Ошибка аудио: ${(err as Error).message}`);
+        setStatusMessage(`${t('errorPrefix', currentLang)}${(err as Error).message}`);
       } finally {
         setThinkingPhase(null);
       }
@@ -352,67 +497,89 @@ export const CopilotApp: React.FC = () => {
         }
         await recorderRef.current.startRecording();
         setIsRecording(true);
-        setStatusMessage('Запись голоса... кликните ещё раз для отправки');
+        setStatusMessage(t('recordingVoice', currentLang));
       } catch (err) {
         console.warn('[CopilotApp] Mic access error:', err);
-        setMicNotice('Разрешите доступ к микрофону в настройках браузера (значок замка в адресной строке).');
+        setMicNotice(t('micErrorNotice', currentLang));
       }
     }
   };
 
   return (
     <div className="flex flex-col h-full bg-zinc-950 text-zinc-100 text-xs font-sans select-none">
-      {/* Sleek Minimalist Top Header */}
+      {/* Sleek Minimalist Top Header: [⚙️ Settings] [📋 Dossier] [Contact Name] [🔄 Sync] */}
       <div className="h-11 px-3 border-b border-zinc-800/80 bg-zinc-900/90 flex items-center justify-between">
-        {/* Left: Minimal Settings Icon or Back Button */}
+        {/* Left Side: 1. Settings icon, 2. Dossier icon, 3. Contact name, 4. Sync button */}
         <div className="flex items-center gap-2">
+          {/* 1. Settings Icon / Back */}
           {activeView === 'settings' ? (
             <button
               onClick={() => setActiveView('copilot')}
               className="p-1.5 rounded-md hover:bg-zinc-800 text-zinc-300 hover:text-white transition flex items-center gap-1 text-[11px]"
-              title="Назад к чату"
+              title={t('backToChat', currentLang)}
             >
               <span>←</span>
-              <span className="font-medium">Назад</span>
+              <span className="font-medium">{t('back', currentLang)}</span>
             </button>
           ) : (
             <button
               onClick={() => setActiveView('settings')}
               className="p-1.5 rounded-md hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition"
-              title="Настройки AI, провайдеров и моделей"
+              title={t('settingsTooltip', currentLang)}
             >
               <span className="text-sm">⚙️</span>
             </button>
           )}
 
-          {/* Center: Contact Name & Dossier Icon */}
+          {/* 2. Dossier Icon */}
           {activeView === 'copilot' && (
-            <div className="flex items-center gap-1.5">
-              <span className="font-semibold text-zinc-200 truncate max-w-[120px]" title={thread?.title}>
-                {thread?.title || 'Собеседник'}
-              </span>
+            <button
+              onClick={() => setIsDossierOpen((prev) => !prev)}
+              className={`p-1.5 rounded hover:bg-zinc-800 transition ${
+                contactNotes || contactGoals
+                  ? 'text-indigo-400 font-bold bg-indigo-950/60'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+              title={t('dossierTooltip', currentLang)}
+            >
+              <span className="text-sm">📋</span>
+            </button>
+          )}
 
-              <button
-                onClick={() => setIsDossierOpen((prev) => !prev)}
-                className={`p-1 rounded hover:bg-zinc-800 transition ${
-                  contactNotes || contactGoals ? 'text-indigo-400 font-bold' : 'text-zinc-500 hover:text-zinc-300'
-                }`}
-                title="Досье и цели по собеседнику"
+          {/* 3. Contact Name */}
+          {activeView === 'copilot' && (
+            <div className="flex items-center gap-1">
+              <span
+                onClick={() => setIsDossierOpen(true)}
+                className="font-semibold text-zinc-200 truncate max-w-[120px] cursor-pointer hover:text-indigo-300 transition"
+                title={thread?.title || t('interlocutor', currentLang)}
               >
-                <span className="text-xs">📋</span>
-              </button>
+                {thread?.title || t('interlocutor', currentLang)}
+              </span>
             </div>
+          )}
+
+          {/* 4. Sync / Refresh Button */}
+          {activeView === 'copilot' && (
+            <button
+              onClick={handleManualSync}
+              disabled={isSyncing}
+              className="p-1 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded transition text-xs"
+              title={t('refresh', currentLang)}
+            >
+              <span className={`inline-block ${isSyncing ? 'animate-spin' : ''}`}>🔄</span>
+            </button>
           )}
         </div>
 
-        {/* Right: RAG Depth Pill & Action Button */}
+        {/* Right Side: RAG Depth Pill & Action Button */}
         {activeView === 'copilot' && (
           <div className="flex items-center gap-1.5">
             <select
               value={crawlDepth}
               onChange={(e) => setCrawlDepth(Number(e.target.value))}
               className="bg-zinc-900 border border-zinc-800 text-zinc-300 rounded px-1.5 py-1 text-[11px] focus:outline-none hover:border-zinc-700 cursor-pointer"
-              title="Количество сообщений для RAG-анализа"
+              title={t('crawlDepthTooltip', currentLang)}
             >
               <option value={30}>30</option>
               <option value={50}>50</option>
@@ -426,7 +593,7 @@ export const CopilotApp: React.FC = () => {
               className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded font-medium flex items-center gap-1 transition text-[11px] shadow-sm shadow-indigo-600/30"
             >
               <span>{isAnalyzing ? '⏳' : '⚡'}</span>
-              <span>{isAnalyzing ? 'Анализ...' : 'Анализ'}</span>
+              <span>{isAnalyzing ? t('analyzing', currentLang) : t('analyze', currentLang)}</span>
             </button>
           </div>
         )}
@@ -457,7 +624,7 @@ export const CopilotApp: React.FC = () => {
 
             {newMessagesCounter > 0 && (
               <span className="px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 text-[9px] animate-pulse">
-                +{newMessagesCounter} нов.
+                +{newMessagesCounter} {t('newBadge', currentLang)}
               </span>
             )}
           </div>
@@ -480,7 +647,7 @@ export const CopilotApp: React.FC = () => {
             <div className="p-3 bg-zinc-900 border-b border-indigo-950 flex flex-col gap-2 shadow-lg">
               <div className="flex items-center justify-between">
                 <span className="font-semibold text-indigo-300 text-xs">
-                  📋 Досье: {thread?.title || 'Собеседник'}
+                  📋 {t('dossierTitle', currentLang)}: {thread?.title || t('interlocutor', currentLang)}
                 </span>
                 <button
                   onClick={() => setIsDossierOpen(false)}
@@ -492,26 +659,26 @@ export const CopilotApp: React.FC = () => {
 
               <div>
                 <label className="block text-[10px] text-zinc-400 mb-0.5">
-                  Моя цель по этому человеку:
+                  {t('myGoalsLabel', currentLang)}
                 </label>
                 <input
                   type="text"
                   value={contactGoals}
                   onChange={(e) => setContactGoals(e.target.value)}
-                  placeholder="Не давать скидку, закрыть сделку к пятнице..."
+                  placeholder={t('myGoalsPlaceholder', currentLang)}
                   className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-indigo-500"
                 />
               </div>
 
               <div>
                 <label className="block text-[10px] text-zinc-400 mb-0.5">
-                  Заметки о характере и манипуляциях:
+                  {t('notesLabel', currentLang)}
                 </label>
                 <textarea
                   rows={2}
                   value={contactNotes}
                   onChange={(e) => setContactNotes(e.target.value)}
-                  placeholder="Давит на жалость, затягивает время..."
+                  placeholder={t('notesPlaceholder', currentLang)}
                   className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-indigo-500 resize-none"
                 />
               </div>
@@ -521,7 +688,7 @@ export const CopilotApp: React.FC = () => {
                   onClick={handleSaveContactDossier}
                   className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[11px] font-medium"
                 >
-                  Сохранить
+                  {t('save', currentLang)}
                 </button>
               </div>
             </div>
@@ -533,7 +700,7 @@ export const CopilotApp: React.FC = () => {
             {analysis && (
               <div className="p-3 bg-zinc-900/90 border border-zinc-800 rounded-lg flex flex-col gap-2 shadow-sm">
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-zinc-300">Анализ манипуляций</span>
+                  <span className="font-semibold text-zinc-300">{t('manipulationAnalysis', currentLang)}</span>
                   <span
                     className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
                       analysis.manipulationVerdict.riskScore > 60
@@ -543,7 +710,7 @@ export const CopilotApp: React.FC = () => {
                         : 'bg-emerald-950 text-emerald-400 border border-emerald-800'
                     }`}
                   >
-                    Риск: {analysis.manipulationVerdict.riskScore}%
+                    {t('risk', currentLang)}: {analysis.manipulationVerdict.riskScore}%
                   </span>
                 </div>
 
@@ -566,7 +733,9 @@ export const CopilotApp: React.FC = () => {
 
                 {analysis.suggestedReplies.length > 0 && (
                   <div className="mt-1 flex flex-col gap-2">
-                    <div className="font-semibold text-zinc-400 text-[11px]">Рекомендуемые ответы:</div>
+                    <div className="font-semibold text-zinc-400 text-[11px]">
+                      {t('recommendedReplies', currentLang)}
+                    </div>
                     {analysis.suggestedReplies.map((reply, idx) => (
                       <div
                         key={idx}
@@ -580,7 +749,7 @@ export const CopilotApp: React.FC = () => {
                             onClick={() => handleInsertReply(reply.text)}
                             className="px-2 py-0.5 bg-zinc-800 hover:bg-indigo-600 text-zinc-200 hover:text-white rounded text-[10px] transition"
                           >
-                            Вставить в чат ↵
+                            {t('insertToChat', currentLang)}
                           </button>
                         </div>
                         <p className="text-zinc-300 text-[11px] italic">"{reply.text}"</p>
@@ -598,7 +767,7 @@ export const CopilotApp: React.FC = () => {
                 <div className="text-center text-zinc-500 py-8 px-4 flex flex-col items-center gap-2">
                   <span className="text-3xl">🧠</span>
                   <p className="text-xs">
-                    Нажмите <strong>«⚡ Анализ»</strong> вверху или задайте любой вопрос Копилоту ниже.
+                    {t('emptyStateText', currentLang)}
                   </p>
                 </div>
               )}
@@ -613,7 +782,7 @@ export const CopilotApp: React.FC = () => {
                   }`}
                 >
                   <div className="text-[10px] font-semibold text-zinc-400 mb-1">
-                    {item.role === 'user' ? 'Вы' : 'TellMeMore Copilot'}
+                    {item.role === 'user' ? t('you', currentLang) : 'TellMeMore Copilot'}
                   </div>
                   <div className="whitespace-pre-wrap">{item.content}</div>
                 </div>
@@ -641,7 +810,7 @@ export const CopilotApp: React.FC = () => {
                   ? 'bg-rose-950 border-rose-600 text-rose-400 animate-pulse'
                   : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'
               }`}
-              title={isRecording ? 'Остановить запись' : 'Задать вопрос голосом'}
+              title={isRecording ? t('stopRecording', currentLang) : t('askVoice', currentLang)}
             >
               {isRecording ? '🔴' : '🎙️'}
             </button>
@@ -656,7 +825,7 @@ export const CopilotApp: React.FC = () => {
                   handleSendQuestion();
                 }
               }}
-              placeholder="Спросить Копилота о переписке..."
+              placeholder={t('askPlaceholder', currentLang)}
               disabled={isSendingPrompt}
               className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500 text-xs"
             />

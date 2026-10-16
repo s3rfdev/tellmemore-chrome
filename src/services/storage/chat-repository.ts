@@ -86,6 +86,30 @@ export class IndexedDBChatRepository implements IChatRepository {
       updatedAt: Date.now(),
     });
   }
+
+  async saveCopilotSession(
+    threadId: string,
+    session: {
+      dialogue: Array<{ role: 'user' | 'assistant'; content: string }>;
+      analysis: any | null;
+      goals?: string;
+    }
+  ): Promise<void> {
+    const db = await getDatabase();
+    await db.put('copilot_sessions', {
+      threadId,
+      dialogue: session.dialogue,
+      analysis: session.analysis,
+      goals: session.goals,
+      updatedAt: Date.now(),
+    });
+  }
+
+  async getCopilotSession(threadId: string) {
+    const db = await getDatabase();
+    const session = await db.get('copilot_sessions', threadId);
+    return session ?? null;
+  }
 }
 
 export class ChromeStorageSettingsRepository implements ISettingsRepository {

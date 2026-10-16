@@ -7,6 +7,14 @@ import { openDB, DBSchema, IDBPDatabase } from 'idb';
 import { ChatMessage } from '../../core/entities/message';
 import { ChatThread, ContactProfile } from '../../core/entities/thread';
 
+export interface CopilotSessionRecord {
+  threadId: string;
+  dialogue: Array<{ role: 'user' | 'assistant'; content: string }>;
+  analysis: any | null;
+  goals?: string;
+  updatedAt: number;
+}
+
 export interface TellMeMoreDB extends DBSchema {
   messages: {
     key: string;
@@ -33,10 +41,14 @@ export interface TellMeMoreDB extends DBSchema {
       updatedAt: number;
     };
   };
+  copilot_sessions: {
+    key: string;
+    value: CopilotSessionRecord;
+  };
 }
 
 const DB_NAME = 'tellmemore_db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbInstance: Promise<IDBPDatabase<TellMeMoreDB>> | null = null;
 
@@ -64,6 +76,11 @@ export function getDatabase(): Promise<IDBPDatabase<TellMeMoreDB>> {
         // Media cache store
         if (!db.objectStoreNames.contains('media_cache')) {
           db.createObjectStore('media_cache', { keyPath: 'hash' });
+        }
+
+        // Copilot sessions store (dialogue history & analysis per interlocutor)
+        if (!db.objectStoreNames.contains('copilot_sessions')) {
+          db.createObjectStore('copilot_sessions', { keyPath: 'threadId' });
         }
       },
     });

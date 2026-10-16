@@ -1,6 +1,7 @@
 /**
  * @file src/content/index.ts
- * @description Main content script entry point. Runs on messenger pages, detects adapter, mounts UI.
+ * @description Main content script entry point. Runs on messenger pages, detects adapter, mounts UI,
+ * monitors real-time thread changes and incoming/outgoing chat messages.
  */
 
 import { AdapterRegistry } from '../adapters/adapter-registry';
@@ -18,6 +19,10 @@ function initialize() {
 
   console.log(`[TellMeMore] Initialized adapter for: ${adapter.name}`);
 
+  let currentThreadId: string | null = null;
+  let currentThreadTitle: string | null = null;
+  let unobserveMessages: (() => void) | null = null;
+
   // Continuously ensure the AI button is mounted near the chat input (Facebook is dynamic SPA)
   const checkAndMount = () => {
     const inputContainer = adapter.findInputContainer();
@@ -26,24 +31,74 @@ function initialize() {
     }
   };
 
-  // Run initial check and set interval for SPA navigation
-  checkAndMount();
-  setInterval(checkAndMount, 1500);
+  // Rebinds the live message observer whenever the active thread changes
+  const bindMessageObserver = () => {
+    if (unobserveMessages) {
+      unobserveMessages();
+      unobserveMessages = null;
+    }
 
-  // Real-time message listener: auto-save incoming/outgoing messages to IndexedDB
-  // and broadcast to SidePanel Copilot
-  adapter.observeNewMessages(async (newMessage) => {
+    unobserveMessages = adapter.observeNewMessages(async (newMessage) => {
+      const thread = adapter.getThreadInfo();
+      if (thread) {
+        await chatRepo.upsertMessages(thread.id, [newMessage]);
+        chrome.runtime.sendMessage({
+          type: 'NEW_CHAT_MESSAGE_DETECTED',
+          payload: newMessage,
+        }).catch(() => {
+          // Ignore if side panel is not open
+        });
+      }
+    });
+  };
+
+  // Detects if the user navigated to a different conversation in the SPA
+  const checkThreadChange = () => {
     const thread = adapter.getThreadInfo();
-    if (thread) {
-      await chatRepo.upsertMessages(thread.id, [newMessage]);
+    if (!thread) return;
+
+    if (thread.id !== currentThreadId || thread.title !== currentThreadTitle) {
+      currentThreadId = thread.id;
+      currentThreadTitle = thread.title;
+
+      console.log(`[TellMeMore] Detected active conversation: ${thread.title} (${thread.id})`);
+      bindMessageObserver();
+
       chrome.runtime.sendMessage({
-        type: 'NEW_CHAT_MESSAGE_DETECTED',
-        payload: newMessage,
+        type: 'ACTIVE_THREAD_CHANGED',
+        payload: thread,
       }).catch(() => {
         // Ignore if side panel is not open
       });
     }
+  };
+
+  // Initial mount and thread check
+  checkAndMount();
+  checkThreadChange();
+
+  // Periodic check for DOM updates and SPA navigation
+  setInterval(() => {
+    checkAndMount();
+    checkThreadChange();
+  }, 1000);
+
+  // Hook into browser history navigation (popstate & pushState/replaceState)
+  window.addEventListener('popstate', () => {
+    setTimeout(checkThreadChange, 250);
   });
+
+  const origPushState = history.pushState;
+  history.pushState = function (...args) {
+    origPushState.apply(this, args);
+    setTimeout(checkThreadChange, 250);
+  };
+
+  const origReplaceState = history.replaceState;
+  history.replaceState = function (...args) {
+    origReplaceState.apply(this, args);
+    setTimeout(checkThreadChange, 250);
+  };
 
   // Message listener for requests coming from Side Panel or Background
   chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {

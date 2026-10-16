@@ -62,6 +62,14 @@ export class FacebookAdapter implements IMessengerAdapter {
     const threadId = thread?.id || 'fb_default';
     const seenIds = new Set<string>();
 
+    // Prepopulate seenIds with existing visible messages so they aren't fired as "new"
+    try {
+      const initial = FacebookCrawler.parseVisibleMessages(threadId);
+      initial.forEach((m) => seenIds.add(m.id));
+    } catch {
+      // Ignore initial parse errors
+    }
+
     const observer = new MutationObserver(() => {
       const currentMessages = FacebookCrawler.parseVisibleMessages(threadId);
       currentMessages.forEach((msg) => {

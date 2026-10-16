@@ -36,12 +36,16 @@ export interface STTConfig {
   endpointUrl?: string;
 }
 
+import { LanguageCode } from '../i18n/translations';
+
 export interface UserSettings {
   activeLLM: LLMConfig;
   activeSTT: STTConfig;
   persona: PersonaGoals;
   /** Default depth of message crawling for analysis (e.g. 50 messages) */
   defaultCrawlDepth: number;
+  /** Selected language or 'auto' for automatic system detection */
+  language: 'auto' | LanguageCode;
 }
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
@@ -64,4 +68,5 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
     customInstructions: '',
   },
   defaultCrawlDepth: 50,
+  language: 'auto',
 };

@@ -34,6 +34,25 @@ export interface IChatRepository {
 
   /** Stores image summary */
   setCachedImageSummary(hash: string, summary: string): Promise<void>;
+
+  /** Saves dialogue history and analysis for a specific contact / thread */
+  saveCopilotSession(
+    threadId: string,
+    session: {
+      dialogue: Array<{ role: 'user' | 'assistant'; content: string }>;
+      analysis: any | null;
+      goals?: string;
+    }
+  ): Promise<void>;
+
+  /** Retrieves saved dialogue history and analysis for a specific contact / thread */
+  getCopilotSession(threadId: string): Promise<{
+    threadId: string;
+    dialogue: Array<{ role: 'user' | 'assistant'; content: string }>;
+    analysis: any | null;
+    goals?: string;
+    updatedAt: number;
+  } | null>;
 }
 
 export interface ISettingsRepository {

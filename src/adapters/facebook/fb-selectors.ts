@@ -53,10 +53,18 @@ export const FB_SELECTORS = {
 
   // Header / Title for thread name
   THREAD_HEADERS: [
+    'div[data-pagelet="MWConversationHeader"] h1',
+    'div[data-pagelet="MWConversationHeader"] h2',
+    'div[data-pagelet="MWConversationHeader"] span[dir="auto"]',
+    'div[role="main"] header h1',
+    'div[role="main"] header h2',
+    'div[role="main"] header span[dir="auto"]',
     'div[role="main"] h1',
     'div[role="main"] h2',
     'div[role="region"][aria-label*="Chat"] h2',
     'div[role="region"][aria-label*="Чат"] h2',
+    'div[role="region"][aria-label*="Chat"] [role="heading"]',
+    'div[role="region"][aria-label*="Чат"] [role="heading"]',
     'span[dir="auto"] > strong',
   ],
 };
