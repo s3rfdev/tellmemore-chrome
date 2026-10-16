@@ -156,7 +156,39 @@ export const QuickMenu: React.FC<QuickMenuProps> = ({
         <span style={{ fontSize: '18px' }}>🧠</span>
         <div>
           <div style={{ fontWeight: 600 }}>Открыть Копилот</div>
-          <div style={{ fontSize: '11px', color: '#a1a1aa' }}>Глубокий диалог и стратегия в боковой панели</div>
+          <div style={{ fontSize: '11px', color: '#a1a1aa' }}>Диалог и RAG-стратегия в боковой панели</div>
+        </div>
+      </button>
+
+      {/* Action 4: Settings */}
+      <button
+        onClick={() => {
+          onClose();
+          onOpenCopilot();
+        }}
+        style={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          padding: '10px',
+          borderRadius: '8px',
+          border: 'none',
+          backgroundColor: 'transparent',
+          color: '#a5b4fc',
+          cursor: 'pointer',
+          textAlign: 'left',
+          transition: 'background-color 0.15s',
+          borderTop: '1px solid #27272a',
+          marginTop: '4px',
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#27272a')}
+        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+      >
+        <span style={{ fontSize: '18px' }}>⚙️</span>
+        <div>
+          <div style={{ fontWeight: 600 }}>Настройки (Ключи & Модели)</div>
+          <div style={{ fontSize: '11px', color: '#818cf8' }}>Выбор LLM, Gemini 3.7, Z-AI, промпты</div>
         </div>
       </button>
     </div>
