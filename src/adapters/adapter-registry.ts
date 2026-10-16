@@ -5,11 +5,12 @@
 
 import { IMessengerAdapter } from '../core/interfaces/messenger-adapter';
 import { FacebookAdapter } from './facebook/fb-adapter';
+import { TelegramAdapter } from './telegram/tg-adapter';
 
 export class AdapterRegistry {
   private static adapters: IMessengerAdapter[] = [
     new FacebookAdapter(),
-    // Future: new TelegramAdapter(), new WhatsAppAdapter()
+    new TelegramAdapter(),
   ];
 
   static registerAdapter(adapter: IMessengerAdapter): void {

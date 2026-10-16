@@ -40,12 +40,18 @@ tellmemore_chrome/
 │   │
 │   ├── adapters/                    # Слой адаптеров конкретных мессенджеров
 │   │   ├── adapter-registry.ts      # Регистратор и автодетектор активного мессенджера
-│   │   └── facebook/                # Адаптер для Facebook Messenger
-│   │       ├── fb-selectors.ts      # Селекторы DOM (с версионированием и fallback)
-│   │       ├── fb-detector.ts       # Определение страницы/дока чата
-│   │       ├── fb-crawler.ts        # Инкрементальный сборщик сообщений и скроллер
-│   │       ├── fb-input.ts          # Безопасный инжектор текста (Lexical/Draft.js)
-│   │       └── fb-adapter.ts        # Реализация IMessengerAdapter
+│   │   ├── facebook/                # Адаптер для Facebook Messenger
+│   │   │   ├── fb-selectors.ts      # Селекторы DOM (с версионированием и fallback)
+│   │   │   ├── fb-detector.ts       # Определение страницы/дока чата
+│   │   │   ├── fb-crawler.ts        # Инкрементальный сборщик сообщений и скроллер
+│   │   │   ├── fb-input.ts          # Безопасный инжектор текста (Lexical/Draft.js)
+│   │   │   └── fb-adapter.ts        # Реализация IMessengerAdapter
+│   │   └── telegram/                # Адаптер для Telegram Web (Web A/Z и Web K)
+│   │       ├── tg-selectors.ts      # Селекторы DOM Telegram (инпуты, сообщения, заголовки)
+│   │       ├── tg-detector.ts       # Определение активного диалога и peer ID
+│   │       ├── tg-crawler.ts        # Сбор сообщений из ленты с защитой от фризов
+│   │       ├── tg-input.ts          # Безопасная вставка в contenteditable инпут
+│   │       └── tg-adapter.ts        # Реализация IMessengerAdapter для Telegram
 │   │
 │   ├── services/                    # Сервисный слой (реализация бизнес-логики и внешних API)
 │   │   ├── llm/                     # Интеграции с нейросетями
@@ -184,6 +190,13 @@ tellmemore_chrome/
 * `fb-crawler.ts`: Сбор сообщений из DOM, определение исходящих/входящих, плавный скролл с обратным восстановлением позиции.
 * `fb-input.ts`: Безопасная вставка текста в React / Lexical / Draft.js редактор через `InputEvent` и `document.execCommand`.
 * `fb-adapter.ts`: Реализация `IMessengerAdapter` для Facebook.
+
+### `src/adapters/telegram/`
+* `tg-selectors.ts`: Отказоустойчивые селекторы Telegram Web (поддержка клиентов Web A/Z и Web K: инпуты, контейнеры, строки сообщений, заголовки).
+* `tg-detector.ts`: Определение открытого чата/канала в Telegram Web, парсинг peer ID и имени собеседника.
+* `tg-crawler.ts`: Парсинг видимых сообщений, определение исходящих (`isOutgoing`), временной лимит (3.5с) и безопасное восстановление скролла.
+* `tg-input.ts`: Вставка текста ответа в contenteditable-поле ввода Telegram через `execCommand('insertText')` с сохранением внутреннего состояния React/Angular.
+* `tg-adapter.ts`: Реализация `IMessengerAdapter` для Telegram Web.
 
 ### `src/core/i18n/`
 * `translations.ts`: Словарь локализации на 6 языков (RU, EN, PL, ES, DE, FR). Автоматическое определение языка операционной системы (`detectSystemLanguage`) через `chrome.i18n.getUILanguage()` / `navigator.language` с возможностью принудительного переопределения в Настройках.

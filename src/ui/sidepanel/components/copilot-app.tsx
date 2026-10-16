@@ -592,16 +592,29 @@ export const CopilotApp: React.FC = () => {
             </button>
           )}
 
-          {/* 3. Contact Name */}
+          {/* 3. Contact Name & Platform Pill */}
           {activeView === 'copilot' && (
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5 max-w-[140px]">
               <span
                 onClick={() => setIsDossierOpen(true)}
-                className="font-semibold text-zinc-200 truncate max-w-[120px] cursor-pointer hover:text-indigo-300 transition"
+                className="font-semibold text-zinc-200 truncate cursor-pointer hover:text-indigo-300 transition"
                 title={thread?.title || t('interlocutor', currentLang)}
               >
                 {thread?.title || t('interlocutor', currentLang)}
               </span>
+
+              {thread?.platform && (
+                <span
+                  className={`text-[9px] px-1 py-0.2 rounded font-mono font-medium uppercase shrink-0 ${
+                    thread.platform === 'telegram'
+                      ? 'bg-sky-950/80 text-sky-400 border border-sky-800/60'
+                      : 'bg-blue-950/80 text-blue-400 border border-blue-800/60'
+                  }`}
+                  title={thread.platform === 'telegram' ? 'Telegram Web' : 'Facebook Messenger'}
+                >
+                  {thread.platform === 'telegram' ? 'TG' : 'FB'}
+                </span>
+              )}
             </div>
           )}
 

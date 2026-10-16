@@ -53,7 +53,7 @@ export async function sendTabMessageWithFallback<T, R>(
   try {
     const tab = await chrome.tabs.get(tabId);
     if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
-      throw new Error('Расширение работает только на веб-страницах мессенджеров (Facebook / Messenger). Откройте вкладку с чатом.');
+      throw new Error('Расширение работает только на веб-страницах мессенджеров (Telegram / Facebook). Откройте вкладку с чатом.');
     }
   } catch (e) {
     if ((e as Error).message.includes('Расширение работает')) throw e;
@@ -88,7 +88,7 @@ export async function sendTabMessageWithFallback<T, R>(
       } catch (injectErr) {
         console.warn('[TellMeMore:TabMessenger] ❌ Programmatic injection error:', injectErr);
         throw new Error(
-          'TellMeMore не подключен к этой странице. Пожалуйста, перейдите на вкладку Facebook и обновите её (нажмите F5 или Cmd+R).'
+          'TellMeMore не подключен к этой странице. Пожалуйста, перейдите на вкладку Telegram или Facebook и обновите её (нажмите F5 или Cmd+R).'
         );
       }
     }

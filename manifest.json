@@ -34,7 +34,9 @@
     {
       "matches": [
         "*://*.facebook.com/*",
-        "*://*.messenger.com/*"
+        "*://*.messenger.com/*",
+        "*://web.telegram.org/*",
+        "*://*.telegram.org/*"
       ],
       "js": [
         "content.js"
