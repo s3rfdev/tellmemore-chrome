@@ -136,14 +136,40 @@ tellmemore_chrome/
 * `IndexedDBChatRepository`: Локальная база сообщений, тредов, контактов и кэша медиа.
 * `ChromeStorageSettingsRepository`: Сохранение настроек в `chrome.storage.local`.
 
+### `src/core/prompts/prompt-templates.ts`
+* `DEFAULT_PROMPT_TEMPLATES`: Полностью настраиваемые шаблоны промптов (Анализ по принципу Сэндвича, Копилот, Описание картинок).
+* `renderPrompt(template, variables)`: Движок интерполяции переменных (`{{userName}}`, `{{contactGoals}}`, `{{ragMemory}}`, `{{recentMessages}}`) с поддержкой условий `{{#if}}`.
+
+### `src/core/i18n/translations.ts`
+* Словарь локализации (Русский `ru` и Английский `en`) для всех UI-компонентов и системных сообщений.
+* Функция `t(key, lang, params)`.
+
 ### `src/services/llm/`
-* `GeminiService`: Прямой вызов Google Gemini API с валидацией structured JSON.
+* `GeminiService`: Прямой вызов Google Gemini API с валидацией structured JSON (поддержка моделей 3.5 Flash, 3.7 Flash, 2.5 Flash/Pro).
+* `ZaiService`: Интеграция с Z-AI (Zhipu AI GLM-4.5, GLM-4.6, GLM-5, GLM-5.3-flash).
 * `OpenAIService`: Универсальный клиент для OpenAI, xAI (Grok), DeepSeek и локальных моделей.
+* `ModelDiscoveryService`: Динамический опрос серверов провайдеров (`fetchGeminiModels`, `fetchZAIModels`, `fetchOpenAIModels`) для подгрузки списка активных моделей прямо в интерфейс.
 * `LLMFactory`: Фабрика активного провайдера.
 
 ### `src/services/stt/`
-* `GroqWhisperService`: Транскрибация речи через Groq Whisper / OpenAI Whisper.
+* `DeepgramService`: Сверхбыстрая транскрибация речи через Deepgram Nova-2 API.
+* `GroqWhisperService`: Транскрибация через Groq Whisper / OpenAI Whisper.
 * `STTFactory`: Фабрика провайдеров транскрибации.
+
+### `src/services/media/image-processor.ts`
+* `ImageProcessor`:
+  * `compressImage(url, maxDimension, quality)`: Ужатие фото на Offscreen Canvas до макс. 800px JPEG quality 70%.
+  * `hashImageUrl(url)`: Хэширование для кэша.
+  * `getOrSummarizeImage(url, visionCallback)`: Однократная отправка на Vision LLM и сохранение текстового описания в IndexedDB `media_cache`.
+
+### `src/services/rag/rag-engine.ts`
+* `RAGEngine`:
+  * `chunkMessages(threadId, messages, chunkSize)`: Чанкование длинной истории диалога (до 300+ сообщений).
+  * `retrieveRelevantChunks(chunks, query, topK)`: Семантическо-лексический поиск ключевых фрагментов переписки под текущий вопрос.
+  * `buildSandwichPrompt(params)`: Сборка промпта по принципу Сэндвича:
+    * Top Bread: Роль, цели пользователя, досье на контакт.
+    * Filling: RAG-память из прошлых сообщений + последние активные сообщения + кэшированные описания фото и голосовых.
+    * Bottom Bread: Жесткие ограничения, защита от манипуляций, выходной формат.
 
 ### `src/services/audio/audio-recorder.ts`
 * `AudioRecorderService`: Запись звука с микрофона пользователя через `MediaRecorder`.
