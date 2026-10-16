@@ -129,8 +129,9 @@ tellmemore_chrome/
 * `IChatRepository`: `upsertMessages()`, `getMessages()`, `saveThread()`, `getThread()`, `getCachedTranscription()`, `setCachedTranscription()`.
 * `ISettingsRepository`: `getSettings()`, `saveSettings()`.
 
-### `src/infra/messaging/message-types.ts`
-* Протокол сообщений: `GET_SETTINGS`, `SAVE_SETTINGS`, `ANALYZE_CHAT`, `TRANSCRIBE_AUDIO`, `GET_CURRENT_THREAD`, `REQUEST_CRAWL_MESSAGES`, `INSERT_DRAFT_TO_CHAT`, `OPEN_SIDEPANEL`.
+### `src/infra/messaging/`
+* `message-types.ts`: Протокол строго типизированных сообщений (`GET_SETTINGS`, `SAVE_SETTINGS`, `ANALYZE_CHAT`, `TRANSCRIBE_AUDIO`, `GET_CURRENT_THREAD`, `REQUEST_CRAWL_MESSAGES`, `INSERT_DRAFT_TO_CHAT`, `OPEN_SIDEPANEL`, `FETCH_AVAILABLE_MODELS`).
+* `tab-messenger.ts`: Отказоустойчивая отправка сообщений во вкладки с автоматической программной инъекцией контент-скрипта при разрыве соединения (`Could not establish connection. Receiving end does not exist`).
 
 ### `src/services/storage/idb-schema.ts` & `chat-repository.ts`
 * `IndexedDBChatRepository`: Локальная база сообщений, тредов, контактов и кэша медиа.
