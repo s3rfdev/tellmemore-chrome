@@ -1,6 +1,6 @@
 /**
  * @file src/ui/sidepanel/components/copilot-app.tsx
- * @description Copilot SidePanel with built-in Settings, Contact Dossier, RAG & Sandwich memory.
+ * @description Senior Minimalist Copilot SidePanel with Live Ingestion, Thinking Pipeline, and Dossier.
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -16,6 +16,7 @@ import {
   AnalyzeChatMsg,
   TranscribeAudioMsg,
   MessageResponse,
+  ExtensionMessage,
 } from '../../../infra/messaging/message-types';
 
 interface DialogueMessage {
@@ -27,7 +28,6 @@ const settingsRepo = new ChromeStorageSettingsRepository();
 const chatRepo = new IndexedDBChatRepository();
 
 export const CopilotApp: React.FC = () => {
-  // Navigation: 'copilot' chat view or 'settings' panel
   const [activeView, setActiveView] = useState<'copilot' | 'settings'>('copilot');
 
   const [thread, setThread] = useState<ChatThread | null>(null);
@@ -40,8 +40,10 @@ export const CopilotApp: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [analysis, setAnalysis] = useState<ChatAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<string>('Готов к анализу');
-  const [crawlDepth, setCrawlDepth] = useState<number>(50);
+  const [thinkingPhase, setThinkingPhase] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string>('Чат готов');
+  const [crawlDepth, setCrawlDepth] = useState<number>(30);
+  const [newMessagesCounter, setNewMessagesCounter] = useState<number>(0);
 
   // Per-contact dossier modal toggle
   const [isDossierOpen, setIsDossierOpen] = useState(false);
@@ -53,28 +55,44 @@ export const CopilotApp: React.FC = () => {
   const [promptText, setPromptText] = useState('');
   const [isSendingPrompt, setIsSendingPrompt] = useState(false);
 
-  // Voice recording
+  // Microphone
   const [isRecording, setIsRecording] = useState(false);
+  const [micNotice, setMicNotice] = useState<string | null>(null);
   const recorderRef = useRef<AudioRecorderService | null>(null);
 
   const dialogueEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll dialogue
+  // Auto-scroll
   useEffect(() => {
     dialogueEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [dialogue]);
+  }, [dialogue, thinkingPhase]);
 
-  // Sync active thread on mount & tab switches
+  // Sync active thread and real-time live message listener
   useEffect(() => {
     loadActiveThread();
 
-    // Re-check when active tab changes
+    // Listen for real-time messages detected in the active chat
+    const messageListener = (msg: ExtensionMessage) => {
+      if (msg.type === 'NEW_CHAT_MESSAGE_DETECTED') {
+        const incoming = msg.payload;
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === incoming.id)) return prev;
+          setNewMessagesCounter((c) => c + 1);
+          return [...prev, incoming];
+        });
+        setStatusMessage('Новое сообщение в чате синхронизировано ✓');
+      }
+    };
+
+    chrome.runtime.onMessage.addListener(messageListener);
+
     const onTabActivated = () => {
       loadActiveThread();
     };
     chrome.tabs.onActivated?.addListener(onTabActivated);
 
     return () => {
+      chrome.runtime.onMessage.removeListener(messageListener);
       chrome.tabs.onActivated?.removeListener(onTabActivated);
     };
   }, []);
@@ -98,7 +116,6 @@ export const CopilotApp: React.FC = () => {
         const currentThread: ChatThread = response.data;
         setThread(currentThread);
 
-        // Load contact dossier from IndexedDB
         const savedContact = await chatRepo.getThread(currentThread.id);
         if (savedContact?.contact) {
           setContact(savedContact.contact);
@@ -107,17 +124,14 @@ export const CopilotApp: React.FC = () => {
           setContact(currentThread.contact);
         }
 
-        // Restore past messages from DB
         const cached = await chatRepo.getMessages(currentThread.id, 100);
         if (cached.length > 0) {
           setMessages(cached);
-          setStatusMessage(`В базе: ${cached.length} сообщений`);
-        } else {
-          setStatusMessage('Чат подключен');
+          setStatusMessage(`В памяти: ${cached.length} сообщений`);
         }
       }
     } catch {
-      setStatusMessage('Откройте вкладку с перепиской и обновите её (F5)');
+      setStatusMessage('Откройте вкладку с чатом');
     }
   };
 
@@ -130,7 +144,7 @@ export const CopilotApp: React.FC = () => {
     setContact(updatedContact);
     await chatRepo.saveContactProfile(updatedContact);
     setIsDossierOpen(false);
-    setStatusMessage('Досье на контакт сохранено ✓');
+    setStatusMessage('Досье сохранено ✓');
   };
 
   // 1. Fetch & analyze messages from active chat with RAG & Sandwich Principle
@@ -138,10 +152,10 @@ export const CopilotApp: React.FC = () => {
     const depth = targetDepth || crawlDepth;
     try {
       setIsAnalyzing(true);
-      setStatusMessage(`RAG: Сбор последних ${depth} сообщений из чата...`);
+      setThinkingPhase('🔍 Чтение истории диалога...');
 
       const tabId = await getActiveTabId();
-      if (!tabId) throw new Error('Активная вкладка не найдена');
+      if (!tabId) throw new Error('Вкладка не найдена');
 
       const crawlResp = await sendTabMessageWithFallback<
         { type: string; payload: { depth: number } },
@@ -152,23 +166,21 @@ export const CopilotApp: React.FC = () => {
       });
 
       if (!crawlResp?.success || !crawlResp.data) {
-        throw new Error(crawlResp?.error || 'Не удалось собрать сообщения из чата');
+        throw new Error(crawlResp?.error || 'Не удалось прочитать сообщения');
       }
 
       const fetchedMessages: ChatMessage[] = crawlResp.data;
       setMessages(fetchedMessages);
+      setNewMessagesCounter(0);
 
-      setStatusMessage(`RAG-индексация и анализ ${fetchedMessages.length} сообщений...`);
+      setThinkingPhase('🧠 RAG-анализ манипуляций и скрытых мотивов...');
 
       const settings = await settingsRepo.getSettings();
-
-      // Check if API key is set
       if (!settings.activeLLM.apiKey) {
         setActiveView('settings');
-        throw new Error('Укажите API-ключ в настройках.');
+        throw new Error('Пожалуйста, укажите API-ключ в настройках.');
       }
 
-      // Build Sandwich Prompt with RAG
       const sandwichPrompt = RAGEngine.buildSandwichPrompt({
         persona: settings.persona,
         contact: {
@@ -177,8 +189,10 @@ export const CopilotApp: React.FC = () => {
         },
         allMessages: fetchedMessages,
         activeMessagesCount: 20,
-        customQuery: contactGoals ? `Моя главная цель по этому контакту: "${contactGoals}"` : undefined,
+        customQuery: contactGoals ? `Моя цель по этому человеку: "${contactGoals}"` : undefined,
       });
+
+      setThinkingPhase(`✍️ Формирование стратегического ответа (${settings.activeLLM.model})...`);
 
       const analysisResp: MessageResponse<ChatAnalysis> = await chrome.runtime.sendMessage<AnalyzeChatMsg>({
         type: 'ANALYZE_CHAT',
@@ -194,16 +208,16 @@ export const CopilotApp: React.FC = () => {
       }
 
       setAnalysis(analysisResp.data);
-      setStatusMessage(`Готово: RAG-анализ ${fetchedMessages.length} сообщений завершён`);
+      setStatusMessage(`Анализ ${fetchedMessages.length} сообщений завершён ✓`);
     } catch (err) {
       console.error('[CopilotApp] Analysis failed:', err);
       setStatusMessage(`Ошибка: ${(err as Error).message}`);
     } finally {
       setIsAnalyzing(false);
+      setThinkingPhase(null);
     }
   };
 
-  // 2. Insert reply directly into chat
   const handleInsertReply = async (text: string) => {
     try {
       const tabId = await getActiveTabId();
@@ -214,13 +228,13 @@ export const CopilotApp: React.FC = () => {
         payload: { text },
       });
 
-      setStatusMessage('Текст вставлен в поле ввода чата ✓');
+      setStatusMessage('Ответ вставлен в поле ввода ✓');
     } catch (err) {
-      setStatusMessage(`Не удалось вставить текст: ${(err as Error).message}`);
+      setStatusMessage(`Ошибка вставки: ${(err as Error).message}`);
     }
   };
 
-  // 3. Send custom question to Copilot with RAG context
+  // 2. Custom prompt to Copilot
   const handleSendQuestion = async (customQuestion?: string) => {
     const query = customQuestion || promptText;
     if (!query.trim() || isSendingPrompt) return;
@@ -229,39 +243,40 @@ export const CopilotApp: React.FC = () => {
     setDialogue(newDialogue);
     setPromptText('');
     setIsSendingPrompt(true);
+    setThinkingPhase('🧠 Подготовка ответа с учётом контекста переписки...');
 
     try {
       const settings = await settingsRepo.getSettings();
 
       if (!settings.activeLLM.apiKey) {
         setActiveView('settings');
-        throw new Error('Пожалуйста, укажите API-ключ в настройках.');
+        throw new Error('Укажите API-ключ в настройках.');
       }
 
+      // Delta-sync: pull any fresh messages from DOM
       let contextMessages = messages;
-
-      if (contextMessages.length === 0) {
-        const tabId = await getActiveTabId();
-        if (tabId) {
-          try {
-            const resp = await sendTabMessageWithFallback<
-              { type: string; payload: { depth: number } },
-              MessageResponse<ChatMessage[]>
-            >(tabId, {
-              type: 'REQUEST_CRAWL_MESSAGES',
-              payload: { depth: 25 },
-            });
-            if (resp?.success && resp.data) {
-              contextMessages = resp.data;
-              setMessages(contextMessages);
-            }
-          } catch {
-            // Proceed even if active crawl fails
+      const tabId = await getActiveTabId();
+      if (tabId) {
+        try {
+          const resp = await sendTabMessageWithFallback<
+            { type: string; payload: { depth: number } },
+            MessageResponse<ChatMessage[]>
+          >(tabId, {
+            type: 'REQUEST_CRAWL_MESSAGES',
+            payload: { depth: 15 },
+          });
+          if (resp?.success && resp.data) {
+            contextMessages = resp.data;
+            setMessages(contextMessages);
+            setNewMessagesCounter(0);
           }
+        } catch {
+          // Continue with in-memory messages
         }
       }
 
-      // Sandwich prompt for dialogue
+      setThinkingPhase(`⚡ Анализ через ${settings.activeLLM.model}...`);
+
       const sandwichQuery = RAGEngine.buildSandwichPrompt({
         persona: settings.persona,
         contact: { ...contact, notes: contactNotes },
@@ -300,15 +315,17 @@ export const CopilotApp: React.FC = () => {
       ]);
     } finally {
       setIsSendingPrompt(false);
+      setThinkingPhase(null);
     }
   };
 
-  // 4. Voice input
+  // 3. Microphone toggle
   const handleVoiceToggle = async () => {
+    setMicNotice(null);
     if (isRecording) {
       setIsRecording(false);
       try {
-        setStatusMessage('Транскрибация голоса...');
+        setThinkingPhase('🎙️ Транскрибация голоса...');
         const result = await recorderRef.current?.stopRecording();
         if (result) {
           const transcribeResp: MessageResponse<string> = await chrome.runtime.sendMessage<TranscribeAudioMsg>({
@@ -325,6 +342,8 @@ export const CopilotApp: React.FC = () => {
         }
       } catch (err) {
         setStatusMessage(`Ошибка аудио: ${(err as Error).message}`);
+      } finally {
+        setThinkingPhase(null);
       }
     } else {
       try {
@@ -333,65 +352,67 @@ export const CopilotApp: React.FC = () => {
         }
         await recorderRef.current.startRecording();
         setIsRecording(true);
-        setStatusMessage('Запись вопроса с микрофона...');
+        setStatusMessage('Запись голоса... кликните ещё раз для отправки');
       } catch (err) {
-        setStatusMessage(`Ошибка микрофона: ${(err as Error).message}`);
+        console.warn('[CopilotApp] Mic access error:', err);
+        setMicNotice('Разрешите доступ к микрофону в настройках браузера (значок замка в адресной строке).');
       }
     }
   };
 
   return (
-    <div className="flex flex-col h-full bg-zinc-950 text-zinc-100 text-xs font-sans">
-      {/* Top Header & Navigation */}
-      <div className="p-2.5 border-b border-zinc-800 bg-zinc-900/80 flex items-center justify-between">
+    <div className="flex flex-col h-full bg-zinc-950 text-zinc-100 text-xs font-sans select-none">
+      {/* Sleek Minimalist Top Header */}
+      <div className="h-11 px-3 border-b border-zinc-800/80 bg-zinc-900/90 flex items-center justify-between">
+        {/* Left: Minimal Settings Icon or Back Button */}
         <div className="flex items-center gap-2">
-          <div className="flex bg-zinc-950 p-0.5 rounded-lg border border-zinc-800">
+          {activeView === 'settings' ? (
             <button
               onClick={() => setActiveView('copilot')}
-              className={`px-2.5 py-1 rounded font-medium transition text-[11px] flex items-center gap-1 ${
-                activeView === 'copilot'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
+              className="p-1.5 rounded-md hover:bg-zinc-800 text-zinc-300 hover:text-white transition flex items-center gap-1 text-[11px]"
+              title="Назад к чату"
             >
-              <span>🧠</span>
-              <span>Копилот</span>
+              <span>←</span>
+              <span className="font-medium">Назад</span>
             </button>
-
+          ) : (
             <button
               onClick={() => setActiveView('settings')}
-              className={`px-2.5 py-1 rounded font-medium transition text-[11px] flex items-center gap-1 ${
-                activeView === 'settings'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
+              className="p-1.5 rounded-md hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition"
+              title="Настройки AI, провайдеров и моделей"
             >
-              <span>⚙️</span>
-              <span>Настройки</span>
+              <span className="text-sm">⚙️</span>
             </button>
-          </div>
+          )}
 
-          {activeView === 'copilot' && thread && (
-            <span className="font-medium text-zinc-300 truncate max-w-[110px]" title={thread.title}>
-              {thread.title}
-            </span>
+          {/* Center: Contact Name & Dossier Icon */}
+          {activeView === 'copilot' && (
+            <div className="flex items-center gap-1.5">
+              <span className="font-semibold text-zinc-200 truncate max-w-[120px]" title={thread?.title}>
+                {thread?.title || 'Собеседник'}
+              </span>
+
+              <button
+                onClick={() => setIsDossierOpen((prev) => !prev)}
+                className={`p-1 rounded hover:bg-zinc-800 transition ${
+                  contactNotes || contactGoals ? 'text-indigo-400 font-bold' : 'text-zinc-500 hover:text-zinc-300'
+                }`}
+                title="Досье и цели по собеседнику"
+              >
+                <span className="text-xs">📋</span>
+              </button>
+            </div>
           )}
         </div>
 
+        {/* Right: RAG Depth Pill & Action Button */}
         {activeView === 'copilot' && (
           <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setIsDossierOpen((prev) => !prev)}
-              className="px-2 py-1 rounded text-[11px] bg-zinc-800 hover:bg-zinc-700 text-indigo-300 border border-zinc-700 transition"
-              title="Открыть досье и цели по этому контакту"
-            >
-              👤 Досье
-            </button>
-
             <select
               value={crawlDepth}
               onChange={(e) => setCrawlDepth(Number(e.target.value))}
-              className="bg-zinc-800 border border-zinc-700 text-zinc-200 rounded px-1.5 py-1 text-[11px] focus:outline-none"
+              className="bg-zinc-900 border border-zinc-800 text-zinc-300 rounded px-1.5 py-1 text-[11px] focus:outline-none hover:border-zinc-700 cursor-pointer"
+              title="Количество сообщений для RAG-анализа"
             >
               <option value={30}>30</option>
               <option value={50}>50</option>
@@ -402,7 +423,7 @@ export const CopilotApp: React.FC = () => {
             <button
               onClick={() => handleDeepAnalysis()}
               disabled={isAnalyzing}
-              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded font-medium flex items-center gap-1 transition text-[11px]"
+              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded font-medium flex items-center gap-1 transition text-[11px] shadow-sm shadow-indigo-600/30"
             >
               <span>{isAnalyzing ? '⏳' : '⚡'}</span>
               <span>{isAnalyzing ? 'Анализ...' : 'Анализ'}</span>
@@ -421,57 +442,86 @@ export const CopilotApp: React.FC = () => {
       {/* VIEW: COPILOT CHAT */}
       {activeView === 'copilot' && (
         <>
-          {/* Status Subheader */}
-          <div className="px-3 py-1 bg-zinc-900/40 border-b border-zinc-800/60 flex items-center justify-between text-[10px] text-zinc-400">
-            <span>{statusMessage}</span>
-            {messages.length > 0 && <span>{messages.length} сообщ. в контексте</span>}
+          {/* Status Sub-bar */}
+          <div className="px-3 py-1 bg-zinc-900/40 border-b border-zinc-800/40 flex items-center justify-between text-[10px] text-zinc-400">
+            <div className="flex items-center gap-1.5 truncate">
+              {thinkingPhase ? (
+                <span className="text-indigo-400 font-medium flex items-center gap-1 animate-pulse">
+                  <span>●</span>
+                  <span>{thinkingPhase}</span>
+                </span>
+              ) : (
+                <span>{statusMessage}</span>
+              )}
+            </div>
+
+            {newMessagesCounter > 0 && (
+              <span className="px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 text-[9px] animate-pulse">
+                +{newMessagesCounter} нов.
+              </span>
+            )}
           </div>
 
-          {/* Dossier Modal / Drawer */}
+          {/* Microphone Warning Banner */}
+          {micNotice && (
+            <div className="px-3 py-1.5 bg-amber-950/80 border-b border-amber-800/60 text-amber-200 text-[10px] flex items-center justify-between">
+              <span>⚠️ {micNotice}</span>
+              <button
+                onClick={() => setMicNotice(null)}
+                className="text-amber-400 hover:text-white ml-2 text-xs"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {/* Dossier Drawer */}
           {isDossierOpen && (
-            <div className="p-3 bg-zinc-900 border-b border-indigo-900/50 flex flex-col gap-2 shadow-inner">
-              <div className="font-semibold text-indigo-300 text-xs">
-                Досье и цели по контакту: {thread?.title || 'Собеседник'}
+            <div className="p-3 bg-zinc-900 border-b border-indigo-950 flex flex-col gap-2 shadow-lg">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-indigo-300 text-xs">
+                  📋 Досье: {thread?.title || 'Собеседник'}
+                </span>
+                <button
+                  onClick={() => setIsDossierOpen(false)}
+                  className="text-zinc-500 hover:text-zinc-300 text-xs"
+                >
+                  ✕
+                </button>
               </div>
 
               <div>
                 <label className="block text-[10px] text-zinc-400 mb-0.5">
-                  Мои конкретные цели по этому человеку:
+                  Моя цель по этому человеку:
                 </label>
                 <input
                   type="text"
                   value={contactGoals}
                   onChange={(e) => setContactGoals(e.target.value)}
-                  placeholder="Например: Не уступать в цене, закрыть договор к пятнице"
+                  placeholder="Не давать скидку, закрыть сделку к пятнице..."
                   className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-indigo-500"
                 />
               </div>
 
               <div>
                 <label className="block text-[10px] text-zinc-400 mb-0.5">
-                  Заметки о собеседнике (психотип, триггеры, прошлые манипуляции):
+                  Заметки о характере и манипуляциях:
                 </label>
                 <textarea
                   rows={2}
                   value={contactNotes}
                   onChange={(e) => setContactNotes(e.target.value)}
-                  placeholder="Любит затягивать сроки, давит на жалость..."
+                  placeholder="Давит на жалость, затягивает время..."
                   className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-zinc-200 text-xs focus:outline-none focus:border-indigo-500 resize-none"
                 />
               </div>
 
               <div className="flex justify-end gap-2 pt-1">
                 <button
-                  onClick={() => setIsDossierOpen(false)}
-                  className="px-2 py-1 text-zinc-400 hover:text-zinc-200 text-[11px]"
-                >
-                  Отмена
-                </button>
-                <button
                   onClick={handleSaveContactDossier}
                   className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[11px] font-medium"
                 >
-                  Сохранить досье
+                  Сохранить
                 </button>
               </div>
             </div>
@@ -479,9 +529,9 @@ export const CopilotApp: React.FC = () => {
 
           {/* Main Area */}
           <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-3">
-            {/* Analysis Dashboard Card */}
+            {/* Analysis Card */}
             {analysis && (
-              <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-lg flex flex-col gap-2.5 shadow-sm">
+              <div className="p-3 bg-zinc-900/90 border border-zinc-800 rounded-lg flex flex-col gap-2 shadow-sm">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-zinc-300">Анализ манипуляций</span>
                   <span
@@ -520,7 +570,7 @@ export const CopilotApp: React.FC = () => {
                     {analysis.suggestedReplies.map((reply, idx) => (
                       <div
                         key={idx}
-                        className="p-2 bg-zinc-950 border border-zinc-800 rounded flex flex-col gap-1"
+                        className="p-2 bg-zinc-950 border border-zinc-800/80 rounded flex flex-col gap-1"
                       >
                         <div className="flex items-center justify-between">
                           <span className="font-semibold text-indigo-400 text-[11px]">
@@ -548,10 +598,7 @@ export const CopilotApp: React.FC = () => {
                 <div className="text-center text-zinc-500 py-8 px-4 flex flex-col items-center gap-2">
                   <span className="text-3xl">🧠</span>
                   <p className="text-xs">
-                    Нажмите <strong>«Анализ»</strong> вверху или задайте вопрос Копилоту ниже.
-                  </p>
-                  <p className="text-[11px] text-zinc-600">
-                    Настройки моделей и ключей доступны во вкладке <strong>⚙️ Настройки</strong> вверху.
+                    Нажмите <strong>«⚡ Анализ»</strong> вверху или задайте любой вопрос Копилоту ниже.
                   </p>
                 </div>
               )}
@@ -571,11 +618,20 @@ export const CopilotApp: React.FC = () => {
                   <div className="whitespace-pre-wrap">{item.content}</div>
                 </div>
               ))}
+
+              {/* Live Thinking Status in Chat */}
+              {thinkingPhase && (
+                <div className="self-start p-2.5 bg-zinc-900/60 border border-zinc-800/60 rounded-lg text-indigo-300 text-xs flex items-center gap-2 animate-pulse">
+                  <div className="w-2 h-2 rounded-full bg-indigo-500" />
+                  <span>{thinkingPhase}</span>
+                </div>
+              )}
+
               <div ref={dialogueEndRef} />
             </div>
           </div>
 
-          {/* Bottom Input */}
+          {/* Bottom Input Area */}
           <div className="p-2.5 border-t border-zinc-800 bg-zinc-900/60 flex items-center gap-2">
             <button
               onClick={handleVoiceToggle}
@@ -600,9 +656,9 @@ export const CopilotApp: React.FC = () => {
                   handleSendQuestion();
                 }
               }}
-              placeholder="Спросить Копилота (с учётом целей и RAG)..."
+              placeholder="Спросить Копилота о переписке..."
               disabled={isSendingPrompt}
-              className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+              className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500 text-xs"
             />
 
             <button

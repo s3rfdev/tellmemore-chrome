@@ -4,10 +4,11 @@
  */
 
 import { ExtensionMessage, MessageResponse } from '../infra/messaging/message-types';
-import { ChromeStorageSettingsRepository } from '../services/storage/chat-repository';
+import { ChromeStorageSettingsRepository, IndexedDBChatRepository } from '../services/storage/chat-repository';
 import { LLMFactory } from '../services/llm/llm-factory';
 import { STTFactory } from '../services/stt/stt-factory';
 import { ModelDiscoveryService } from '../services/llm/model-discovery';
+import { MediaEnricherService } from '../services/media/media-enricher';
 
 const settingsRepo = new ChromeStorageSettingsRepository();
 
@@ -29,9 +30,41 @@ export async function handleBackgroundMessage(
 
       case 'ANALYZE_CHAT': {
         const settings = await settingsRepo.getSettings();
+        const chatRepo = new IndexedDBChatRepository();
+        const mediaEnricher = new MediaEnricherService(chatRepo);
+
+        // Pre-process media: one-time compression and IndexedDB cache lookup
+        const enrichedMessages = await mediaEnricher.enrichMessages(
+          message.payload.messages,
+          async (base64, mimeType) => {
+            if (settings.activeLLM.provider === 'gemini' && settings.activeLLM.apiKey) {
+              const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${settings.activeLLM.apiKey}`;
+              const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  contents: [
+                    {
+                      parts: [
+                        { text: 'Опиши кратко (1 предложением), что на изображении в контексте переписки (текст, суммы, условия).' },
+                        { inlineData: { mimeType, data: base64 } },
+                      ],
+                    },
+                  ],
+                }),
+              });
+              if (res.ok) {
+                const j = await res.json();
+                return j.candidates?.[0]?.content?.parts?.[0]?.text || 'Изображение';
+              }
+            }
+            return 'Изображение в чате';
+          }
+        );
+
         const llm = LLMFactory.create(settings.activeLLM);
         const analysis = await llm.analyzeChat(
-          message.payload.messages,
+          enrichedMessages,
           message.payload.persona,
           message.payload.customQuery
         );

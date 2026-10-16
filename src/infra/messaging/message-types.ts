@@ -18,7 +18,8 @@ export type ExtensionMessageType =
   | 'OPEN_SIDEPANEL'
   | 'FETCH_AVAILABLE_MODELS'
   | 'GET_CONTACT_PROFILE'
-  | 'SAVE_CONTACT_PROFILE';
+  | 'SAVE_CONTACT_PROFILE'
+  | 'NEW_CHAT_MESSAGE_DETECTED';
 
 export interface BaseMessage<T extends ExtensionMessageType, P> {
   type: T;
@@ -84,6 +85,8 @@ export interface SaveContactProfilePayload {
 }
 export type SaveContactProfileMsg = BaseMessage<'SAVE_CONTACT_PROFILE', SaveContactProfilePayload>;
 
+export type NewChatMessageMsg = BaseMessage<'NEW_CHAT_MESSAGE_DETECTED', ChatMessage>;
+
 export type ExtensionMessage =
   | GetSettingsMsg
   | SaveSettingsMsg
@@ -96,7 +99,8 @@ export type ExtensionMessage =
   | OpenSidePanelMsg
   | FetchModelsMsg
   | GetContactProfileMsg
-  | SaveContactProfileMsg;
+  | SaveContactProfileMsg
+  | NewChatMessageMsg;
 
 export interface MessageResponse<T = unknown> {
   success: boolean;

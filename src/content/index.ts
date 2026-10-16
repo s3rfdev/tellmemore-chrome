@@ -31,10 +31,17 @@ function initialize() {
   setInterval(checkAndMount, 1500);
 
   // Real-time message listener: auto-save incoming/outgoing messages to IndexedDB
+  // and broadcast to SidePanel Copilot
   adapter.observeNewMessages(async (newMessage) => {
     const thread = adapter.getThreadInfo();
     if (thread) {
       await chatRepo.upsertMessages(thread.id, [newMessage]);
+      chrome.runtime.sendMessage({
+        type: 'NEW_CHAT_MESSAGE_DETECTED',
+        payload: newMessage,
+      }).catch(() => {
+        // Ignore if side panel is not open
+      });
     }
   });
 

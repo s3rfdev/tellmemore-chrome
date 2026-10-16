@@ -63,10 +63,78 @@ export class GeminiService implements ILLMProvider {
   }
 
   async streamText(request: CopilotPromptRequest, onChunk: (chunk: string) => void): Promise<string> {
-    // For simplicity in non-streaming fallback, invoke generateText and return
-    const text = await this.generateText(request);
-    onChunk(text);
-    return text;
+    const model = this.config.model || 'gemini-3.7-flash';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${this.config.apiKey}`;
+
+    const contents = request.messages.map((m) => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }],
+    }));
+
+    const body: Record<string, unknown> = {
+      contents,
+      generationConfig: {
+        temperature: request.temperature ?? this.config.temperature ?? 0.7,
+      },
+    };
+
+    if (request.systemPrompt) {
+      body.systemInstruction = {
+        parts: [{ text: request.systemPrompt }],
+      };
+    }
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok || !response.body) {
+        const fallback = await this.generateText(request);
+        onChunk(fallback);
+        return fallback;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullText = '';
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const jsonStr = line.slice(6).trim();
+            if (jsonStr) {
+              try {
+                const data = JSON.parse(jsonStr);
+                const chunk = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (chunk) {
+                  fullText += chunk;
+                  onChunk(chunk);
+                }
+              } catch {
+                // Ignore parse errors on sse frames
+              }
+            }
+          }
+        }
+      }
+
+      return fullText || (await this.generateText(request));
+    } catch {
+      const fallback = await this.generateText(request);
+      onChunk(fallback);
+      return fallback;
+    }
   }
 
   async analyzeChat(messages: ChatMessage[], persona: PersonaGoals, customQuery?: string): Promise<ChatAnalysis> {
