@@ -185,9 +185,21 @@ tellmemore_chrome/
 * `fb-input.ts`: Безопасная вставка текста в React / Lexical / Draft.js редактор через `InputEvent` и `document.execCommand`.
 * `fb-adapter.ts`: Реализация `IMessengerAdapter` для Facebook.
 
+### `src/core/i18n/`
+* `translations.ts`: Словарь локализации на 6 языков (RU, EN, PL, ES, DE, FR). Автоматическое определение языка операционной системы (`detectSystemLanguage`) через `chrome.i18n.getUILanguage()` / `navigator.language` с возможностью принудительного переопределения в Настройках.
+
+### `src/services/storage/`
+* `idb-schema.ts`: Схема IndexedDB (DB_VERSION 2) с хранилищами:
+  * `messages`: Сохранённые сообщения чатов.
+  * `threads`: Метаданные веток диалогов.
+  * `contacts`: Досье и цели по контактам.
+  * `media_cache`: Однократный анализ картинок и голосовых сообщений.
+  * `copilot_sessions`: История диалога с Копилотом, вердикты анализа и цели индивидуально для каждого собеседника.
+* `chat-repository.ts`: Реализация `IChatRepository` и `ISettingsRepository` с методами `saveCopilotSession` и `getCopilotSession`.
+
 ### `src/content/`
 * `shadow-root-manager.ts`: Монтирование React-компонентов в изолированный Shadow Root.
-* `index.ts`: Точка входа контент-скрипта, автодетектор адаптера, отслеживание появления новых сообщений в реальном времени.
+* `index.ts`: Точка входа контент-скрипта, автодетектор адаптера, отслеживание появления новых сообщений в реальном времени, непрерывный мониторинг смены активного диалога в SPA (`ACTIVE_THREAD_CHANGED`) с перепривязкой наблюдателей.
 
 ### `src/background/`
 * `message-router.ts`: Обработка запросов к LLM/STT без CORS, управление Side Panel.
@@ -200,7 +212,10 @@ tellmemore_chrome/
 * `injected-overlay.tsx`: Главный контейнер инжектируемого интерфейса.
 
 ### `src/ui/popup/`
-* `settings-app.tsx`: Окно настроек (API ключи Gemini/OpenAI/Groq, персона, цели, глубина сбора).
+* `settings-app.tsx`: Окно настроек (API ключи Gemini/Z-AI/OpenAI/Deepgram/Groq, активные модели с сервера, выбор языка с автоопределением системы, персона, цели, глубина сбора).
 
 ### `src/ui/sidepanel/`
-* `copilot-app.tsx`: Боковая панель Chrome Side Panel с карточкой анализа манипуляций, рекомендациями ответов с кнопкой «Вставить в чат» и свободным диалогом с AI (текстом и голосом).
+* `copilot-app.tsx`: Боковая панель Chrome Side Panel:
+  * Верхняя панель: `[⚙️ Настройки] [📋 Досье] [Имя собеседника] [🔄 Синхронизация] [30▾ Глубина] [⚡ Анализ]`.
+  * Автоматическое переключение контекста и истории Копилота при клике на любого собеседника в Facebook Messenger.
+  * Карточка анализа манипуляций, рекомендации ответов с кнопкой «Вставить в чат», свободный диалог с AI (текстом и голосом) с автосохранением в IndexedDB под каждый контакт.
