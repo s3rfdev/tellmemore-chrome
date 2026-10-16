@@ -128,8 +128,8 @@ flowchart TD
 ### Build from Source
 ```bash
 # 1. Clone repository
-git clone https://github.com/s3rfdev/TellMeMore-Extension.git
-cd TellMeMore-Extension
+git clone https://github.com/s3rfdev/tellmemore-chrome.git
+cd tellmemore-chrome
 
 # 2. Install dependencies
 npm install
